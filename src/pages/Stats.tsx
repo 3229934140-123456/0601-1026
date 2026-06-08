@@ -102,7 +102,7 @@ export const Stats = () => {
         )
       : 0;
 
-  const completedGoals = goals.filter((g) => g.status === 'completed').length;
+  const completedGoals = goals.filter((g) => !g.archived && g.status === 'completed').length;
   const totalGoals = goals.filter((g) => !g.archived).length;
   const goalCompletionRate = totalGoals > 0 ? Math.round((completedGoals / totalGoals) * 100) : 0;
 

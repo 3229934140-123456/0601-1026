@@ -65,6 +65,8 @@ interface AppState {
   addMeeting: (meeting: Omit<Meeting, 'id' | 'createdAt'>) => Meeting;
   updateMeeting: (id: string, updates: Partial<Meeting>) => void;
   updateActionItem: (meetingId: string, actionItemId: string, updates: Partial<ActionItem>) => void;
+  addActionItemWithTask: (meetingId: string, actionItem: Omit<ActionItem, 'id'>, syncToTask?: boolean, krId?: string) => ActionItem;
+  toggleActionItemComplete: (meetingId: string, actionItemId: string) => void;
   
   getUserById: (id: string) => User | undefined;
   getGoalById: (id: string) => Goal | undefined;
@@ -142,9 +144,30 @@ export const useStore = create<AppState>((set, get) => ({
     })),
 
   updateTaskStatus: (id, status) =>
-    set((state) => ({
-      tasks: state.tasks.map((t) => (t.id === id ? { ...t, status } : t)),
-    })),
+    set((state) => {
+      const task = state.tasks.find((t) => t.id === id);
+      const updatedTasks = state.tasks.map((t) => (t.id === id ? { ...t, status } : t));
+
+      if (task && task.meetingId && task.actionItemId) {
+        const updatedMeetings = state.meetings.map((m) => {
+          if (m.id !== task.meetingId) return m;
+          return {
+            ...m,
+            actionItems: m.actionItems.map((item) => {
+              if (item.id !== task.actionItemId) return item;
+              return { ...item, completed: status === 'done' };
+            }),
+          };
+        });
+
+        return {
+          tasks: updatedTasks,
+          meetings: updatedMeetings,
+        };
+      }
+
+      return { tasks: updatedTasks };
+    }),
 
   addProgress: (progress) =>
     set((state) => ({
@@ -197,6 +220,91 @@ export const useStore = create<AppState>((set, get) => ({
       ),
     })),
 
+  addActionItemWithTask: (meetingId, actionItem, syncToTask = false, krId) => {
+    const newActionItem: ActionItem = {
+      ...actionItem,
+      id: generateId(),
+    };
+
+    let createdTask: Task | null = null;
+
+    if (syncToTask) {
+      const taskId = generateId();
+      newActionItem.taskId = taskId;
+
+      createdTask = {
+        id: taskId,
+        title: actionItem.content,
+        description: '',
+        keyResultId: krId || '',
+        assigneeId: actionItem.assigneeId,
+        priority: 'medium',
+        status: actionItem.completed ? 'done' : 'todo',
+        dueDate: actionItem.dueDate,
+        createdAt: new Date().toISOString(),
+        meetingId: meetingId,
+        actionItemId: newActionItem.id,
+      };
+    }
+
+    set((state) => {
+      const updatedMeetings = state.meetings.map((m) =>
+        m.id === meetingId
+          ? { ...m, actionItems: [...m.actionItems, newActionItem] }
+          : m
+      );
+
+      const updatedTasks = createdTask
+        ? [...state.tasks, createdTask]
+        : state.tasks;
+
+      return {
+        meetings: updatedMeetings,
+        tasks: updatedTasks,
+      };
+    });
+
+    return newActionItem;
+  },
+
+  toggleActionItemComplete: (meetingId, actionItemId) => {
+    set((state) => {
+      let updatedTask: Task | null = null;
+
+      const updatedMeetings = state.meetings.map((m) => {
+        if (m.id !== meetingId) return m;
+        return {
+          ...m,
+          actionItems: m.actionItems.map((item) => {
+            if (item.id !== actionItemId) return item;
+            const newCompleted = !item.completed;
+
+            if (item.taskId) {
+              const task = state.tasks.find((t) => t.id === item.taskId);
+              if (task) {
+                updatedTask = {
+                  ...task,
+                  status: newCompleted ? 'done' : 'todo',
+                };
+              }
+            }
+
+            return { ...item, completed: newCompleted };
+          }),
+        };
+      });
+
+      const updatedTasks = updatedTask
+        ? state.tasks.map((t) => (t.id === updatedTask!.id ? updatedTask! : t))
+        : state.tasks;
+
+      return {
+        meetings: updatedMeetings,
+        tasks: updatedTasks,
+      };
+    });
+  },
+
   getUserById: (id) => get().users.find((u) => u.id === id),
   getGoalById: (id) => get().goals.find((g) => g.id === id),
   getKeyResultsByGoalId: (goalId) => get().keyResults.filter((kr) => kr.goalId === goalId),
@@ -210,8 +318,13 @@ export const useStore = create<AppState>((set, get) => ({
     if (krs.length === 0) return 0;
 
     const totalWeight = krs.reduce((sum, kr) => sum + kr.weight, 0);
+    if (totalWeight <= 0) return 0;
+
     const weightedProgress = krs.reduce((sum, kr) => {
-      const progress = (kr.currentValue / kr.targetValue) * 100;
+      if (!kr.targetValue || kr.targetValue <= 0 || isNaN(kr.targetValue)) {
+        return sum;
+      }
+      const progress = Math.min(100, (kr.currentValue / kr.targetValue) * 100);
       return sum + progress * kr.weight;
     }, 0);
 

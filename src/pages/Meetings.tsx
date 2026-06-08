@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Calendar,
   Users,
@@ -10,6 +11,7 @@ import {
   Check,
   Trash2,
   PlusCircle,
+  Target,
 } from 'lucide-react';
 import { Layout } from '../components/Layout/Layout';
 import { Avatar } from '../components/Avatar';
@@ -40,10 +42,23 @@ interface NewActionItemForm {
   content: string;
   assigneeId: string;
   dueDate: string;
+  syncToTask: boolean;
+  krId: string;
 }
 
 export const Meetings = () => {
-  const { meetings, users, getUserById, addMeeting, updateMeeting, updateActionItem } = useStore();
+  const {
+    meetings,
+    users,
+    keyResults,
+    getUserById,
+    getGoalById,
+    addMeeting,
+    updateMeeting,
+    addActionItemWithTask,
+    toggleActionItemComplete,
+  } = useStore();
+  const navigate = useNavigate();
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isAddActionItemOpen, setIsAddActionItemOpen] = useState(false);
@@ -59,12 +74,24 @@ export const Meetings = () => {
   const [newActionItemContent, setNewActionItemContent] = useState('');
   const [newActionItemAssignee, setNewActionItemAssignee] = useState('');
   const [newActionItemDueDate, setNewActionItemDueDate] = useState('');
+  const [newActionItemSyncToTask, setNewActionItemSyncToTask] = useState(false);
+  const [newActionItemKrId, setNewActionItemKrId] = useState('');
 
   const sortedMeetings = useMemo(() => {
     return [...meetings].sort(
       (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
     );
   }, [meetings]);
+
+  const keyResultOptions = useMemo(() => {
+    return keyResults.map((kr) => {
+      const goal = getGoalById(kr.goalId);
+      return {
+        value: kr.id,
+        label: goal ? `${goal.title} - ${kr.title}` : kr.title,
+      };
+    });
+  }, [keyResults, getGoalById]);
 
   const selectedMeeting = useMemo(() => {
     if (!selectedMeetingId) return null;
@@ -75,8 +102,8 @@ export const Meetings = () => {
     setSelectedMeetingId(meetingId === selectedMeetingId ? null : meetingId);
   };
 
-  const toggleActionItem = (meetingId: string, actionItemId: string, completed: boolean) => {
-    updateActionItem(meetingId, actionItemId, { completed: !completed });
+  const toggleActionItem = (meetingId: string, actionItemId: string) => {
+    toggleActionItemComplete(meetingId, actionItemId);
   };
 
   const handleDeleteActionItem = (meetingId: string, actionItemId: string) => {
@@ -109,7 +136,7 @@ export const Meetings = () => {
   const addFormActionItem = () => {
     setFormActionItems((prev) => [
       ...prev,
-      { id: generateId(), content: '', assigneeId: '', dueDate: '' },
+      { id: generateId(), content: '', assigneeId: '', dueDate: '', syncToTask: false, krId: '' },
     ]);
   };
 
@@ -117,7 +144,7 @@ export const Meetings = () => {
     setFormActionItems((prev) => prev.filter((item) => item.id !== id));
   };
 
-  const updateFormActionItem = (id: string, field: keyof NewActionItemForm, value: string) => {
+  const updateFormActionItem = (id: string, field: keyof NewActionItemForm, value: string | boolean) => {
     setFormActionItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, [field]: value } : item))
     );
@@ -136,26 +163,33 @@ export const Meetings = () => {
 
     const dateTime = formDate && formTime ? `${formDate}T${formTime}:00` : formDate || new Date().toISOString();
 
-    const actionItems: ActionItem[] = formActionItems
-      .filter((item) => item.content.trim())
-      .map((item) => ({
-        id: generateId(),
-        meetingId: '',
-        content: item.content,
-        assigneeId: item.assigneeId,
-        dueDate: item.dueDate || new Date().toISOString().split('T')[0],
-        completed: false,
-      }));
-
     const newMeeting = {
       title: formTitle,
       date: dateTime,
       attendees: formAttendees,
       notes: formNotes,
-      actionItems: actionItems,
+      actionItems: [],
     };
 
     const createdMeeting = addMeeting(newMeeting);
+
+    formActionItems
+      .filter((item) => item.content.trim())
+      .forEach((item) => {
+        addActionItemWithTask(
+          createdMeeting.id,
+          {
+            meetingId: createdMeeting.id,
+            content: item.content,
+            assigneeId: item.assigneeId || users[0]?.id || '',
+            dueDate: item.dueDate || new Date().toISOString().split('T')[0],
+            completed: false,
+          },
+          item.syncToTask,
+          item.krId
+        );
+      });
+
     setIsCreateModalOpen(false);
     setSelectedMeetingId(createdMeeting.id);
   };
@@ -164,27 +198,26 @@ export const Meetings = () => {
     setNewActionItemContent('');
     setNewActionItemAssignee('');
     setNewActionItemDueDate('');
+    setNewActionItemSyncToTask(false);
+    setNewActionItemKrId('');
     setIsAddActionItemOpen(true);
   };
 
   const handleAddActionItem = () => {
     if (!newActionItemContent.trim() || !selectedMeetingId) return;
 
-    const newItem: ActionItem = {
-      id: generateId(),
-      meetingId: selectedMeetingId,
-      content: newActionItemContent,
-      assigneeId: newActionItemAssignee || users[0]?.id || '',
-      dueDate: newActionItemDueDate || new Date().toISOString().split('T')[0],
-      completed: false,
-    };
-
-    const meeting = meetings.find((m) => m.id === selectedMeetingId);
-    if (meeting) {
-      updateMeeting(selectedMeetingId, {
-        actionItems: [...meeting.actionItems, newItem],
-      });
-    }
+    addActionItemWithTask(
+      selectedMeetingId,
+      {
+        meetingId: selectedMeetingId,
+        content: newActionItemContent,
+        assigneeId: newActionItemAssignee || users[0]?.id || '',
+        dueDate: newActionItemDueDate || new Date().toISOString().split('T')[0],
+        completed: false,
+      },
+      newActionItemSyncToTask,
+      newActionItemKrId
+    );
 
     setIsAddActionItemOpen(false);
   };
@@ -263,6 +296,11 @@ export const Meetings = () => {
     const assignee = getUserById(item.assigneeId);
     const isOverdue = new Date(item.dueDate) < new Date() && !item.completed;
 
+    const handleTaskClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      navigate('/tasks');
+    };
+
     return (
       <div
         className={cn(
@@ -271,7 +309,7 @@ export const Meetings = () => {
         )}
       >
         <button
-          onClick={() => toggleActionItem(meetingId, item.id, item.completed)}
+          onClick={() => toggleActionItem(meetingId, item.id)}
           className={cn(
             'mt-0.5 w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all duration-200',
             item.completed
@@ -283,14 +321,25 @@ export const Meetings = () => {
         </button>
 
         <div className="flex-1 min-w-0">
-          <p
-            className={cn(
-              'text-sm leading-relaxed',
-              item.completed ? 'text-gray-400 line-through' : 'text-gray-700'
+          <div className="flex items-start gap-2">
+            <p
+              className={cn(
+                'text-sm leading-relaxed flex-1',
+                item.completed ? 'text-gray-400 line-through' : 'text-gray-700'
+              )}
+            >
+              {item.content}
+            </p>
+            {item.taskId && (
+              <button
+                onClick={handleTaskClick}
+                className="shrink-0 p-1 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                title="已同步为任务，点击跳转到任务页面"
+              >
+                <Target className="w-4 h-4" />
+              </button>
             )}
-          >
-            {item.content}
-          </p>
+          </div>
           <div className="flex items-center gap-3 mt-2">
             {assignee && (
               <div className="flex items-center gap-1.5">
@@ -589,6 +638,26 @@ export const Meetings = () => {
                         onChange={(value) => updateFormActionItem(item.id, 'dueDate', value)}
                       />
                     </div>
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={item.syncToTask}
+                          onChange={(e) => updateFormActionItem(item.id, 'syncToTask', e.target.checked)}
+                          className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                        />
+                        <span className="text-xs text-gray-600">同步为任务</span>
+                      </label>
+                      {item.syncToTask && (
+                        <Select
+                          value={item.krId}
+                          onChange={(value) => updateFormActionItem(item.id, 'krId', value)}
+                          options={keyResultOptions}
+                          placeholder="选择关键结果"
+                          className="flex-1"
+                        />
+                      )}
+                    </div>
                   </div>
                   <button
                     onClick={() => removeFormActionItem(item.id)}
@@ -647,6 +716,26 @@ export const Meetings = () => {
               value={newActionItemDueDate}
               onChange={setNewActionItemDueDate}
             />
+          </div>
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={newActionItemSyncToTask}
+                onChange={(e) => setNewActionItemSyncToTask(e.target.checked)}
+                className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+              />
+              <span className="text-sm font-medium text-gray-700">同步为任务</span>
+            </label>
+            {newActionItemSyncToTask && (
+              <Select
+                label="关联关键结果"
+                value={newActionItemKrId}
+                onChange={setNewActionItemKrId}
+                options={keyResultOptions}
+                placeholder="请选择关联的关键结果"
+              />
+            )}
           </div>
         </div>
       </Modal>

@@ -55,6 +55,8 @@ export interface Task {
   status: TaskStatus;
   dueDate: string;
   createdAt: string;
+  meetingId?: string;
+  actionItemId?: string;
 }
 
 export interface Attachment {
@@ -107,6 +109,7 @@ export interface ActionItem {
   assigneeId: string;
   dueDate: string;
   completed: boolean;
+  taskId?: string;
 }
 
 export interface Meeting {

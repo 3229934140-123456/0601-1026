@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { ChevronRight, ChevronDown, ListTree, AlignHorizontalJustifyEnd, X, Target, Calendar, Scale, User, CheckCircle, Plus } from 'lucide-react';
+import { ChevronRight, ChevronDown, ListTree, AlignHorizontalJustifyEnd, X, Target, Calendar, Scale, User, CheckCircle, Plus, Edit2, Save, XCircle, FileText, Clock, Paperclip, ArrowLeft } from 'lucide-react';
 import { Layout } from '../components/Layout/Layout';
 import { ProgressBar } from '../components/ProgressBar';
 import { StatusBadge } from '../components/StatusBadge';
@@ -7,7 +7,7 @@ import { Avatar } from '../components/Avatar';
 import { Modal, Button, Input, Textarea, Select } from '../components/Modal';
 import { useStore } from '../store/useStore';
 import { cn, formatDate } from '../utils/helpers';
-import type { Goal, KeyResult, GoalType } from '../types';
+import type { Goal, KeyResult, GoalType, Task, TaskStatus } from '../types';
 
 const Goals = () => {
   const {
@@ -19,19 +19,35 @@ const Goals = () => {
     setViewMode,
     addGoal,
     addKeyResult,
+    updateKeyResult,
+    updateTaskStatus,
+    updateGoal,
     calculateGoalProgress,
     getKeyResultsByGoalId,
+    getTasksByKeyResultId,
+    getProgressesByKeyResultId,
     getChildGoals,
     getUserById,
     getGoalById,
   } = useStore();
 
   const [expandedGoals, setExpandedGoals] = useState<Set<string>>(new Set(['goal-1', 'goal-2']));
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [isKRModalOpen, setIsKRModalOpen] = useState(false);
+  const [selectedKRId, setSelectedKRId] = useState<string | null>(null);
+  const [isKREditing, setIsKREditing] = useState(false);
+  const [krEditForm, setKrEditForm] = useState({
+    targetValue: '',
+    currentValue: '',
+    weight: '',
+    ownerId: '',
+  });
+  const [krEditErrors, setKrEditErrors] = useState<{ targetValue?: string }>({});
   const [goalFormErrors, setGoalFormErrors] = useState<{ title?: string }>({});
-  const [krFormErrors, setKrFormErrors] = useState<{ title?: string }>({});
+  const [krFormErrors, setKrFormErrors] = useState<{ title?: string; targetValue?: string }>({});
 
   const [goalForm, setGoalForm] = useState({
     type: 'department' as GoalType,
@@ -74,6 +90,71 @@ const Goals = () => {
     return getUserById(selectedGoal.ownerId) || null;
   }, [selectedGoal, getUserById]);
 
+  const selectedKeyResult = useMemo(() => {
+    if (!selectedKRId) return null;
+    return selectedGoalKeyResults.find((kr) => kr.id === selectedKRId) || null;
+  }, [selectedKRId, selectedGoalKeyResults]);
+
+  const selectedKROwner = useMemo(() => {
+    if (!selectedKeyResult) return null;
+    return getUserById(selectedKeyResult.ownerId) || null;
+  }, [selectedKeyResult, getUserById]);
+
+  const krTasks = useMemo(() => {
+    if (!selectedKRId) return [];
+    return getTasksByKeyResultId(selectedKRId);
+  }, [selectedKRId, getTasksByKeyResultId]);
+
+  const krProgresses = useMemo(() => {
+    if (!selectedKRId) return [];
+    return getProgressesByKeyResultId(selectedKRId).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }, [selectedKRId, getProgressesByKeyResultId]);
+
+  const krProgress = useMemo(() => {
+    if (!selectedKeyResult || !selectedKeyResult.targetValue || selectedKeyResult.targetValue <= 0) {
+      return 0;
+    }
+    return Math.min(100, Math.round((selectedKeyResult.currentValue / selectedKeyResult.targetValue) * 100));
+  }, [selectedKeyResult]);
+
+  const krTaskCompletion = useMemo(() => {
+    if (krTasks.length === 0) return 0;
+    const doneCount = krTasks.filter((t) => t.status === 'done').length;
+    return Math.round((doneCount / krTasks.length) * 100);
+  }, [krTasks]);
+
+  const getAllDescendantIds = (goalId: string): Set<string> => {
+    const result = new Set<string>();
+    const stack = [goalId];
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      const children = getChildGoals(current);
+      children.forEach((child) => {
+        if (!result.has(child.id)) {
+          result.add(child.id);
+          stack.push(child.id);
+        }
+      });
+    }
+    return result;
+  };
+
+  const canDrop = (draggedGoalId: string, targetGoalId: string | null): boolean => {
+    if (!targetGoalId) return true;
+    const draggedGoal = getGoalById(draggedGoalId);
+    const targetGoal = getGoalById(targetGoalId);
+    if (!draggedGoal || !targetGoal) return false;
+    if (draggedGoal.type !== 'personal') return false;
+    if (targetGoal.type !== 'department') return false;
+    if (draggedGoalId === targetGoalId) return false;
+    if (draggedGoal.parentId === targetGoalId) return false;
+    const descendants = getAllDescendantIds(draggedGoalId);
+    if (descendants.has(targetGoalId)) return false;
+    return true;
+  };
+
   const toggleExpand = (goalId: string) => {
     setExpandedGoals((prev) => {
       const next = new Set(prev);
@@ -88,6 +169,48 @@ const Goals = () => {
 
   const handleGoalClick = (goalId: string) => {
     setSelectedGoalId(selectedGoalId === goalId ? null : goalId);
+  };
+
+  const handleDragStart = (e: React.DragEvent, goalId: string) => {
+    const goal = getGoalById(goalId);
+    if (!goal || goal.type !== 'personal') {
+      e.preventDefault();
+      return;
+    }
+    setDraggedId(goalId);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', goalId);
+  };
+
+  const handleDragOver = (e: React.DragEvent, targetId: string | null) => {
+    e.preventDefault();
+    if (!draggedId) return;
+    if (canDrop(draggedId, targetId)) {
+      e.dataTransfer.dropEffect = 'move';
+      setDragOverId(targetId);
+    } else {
+      e.dataTransfer.dropEffect = 'none';
+    }
+  };
+
+  const handleDragLeave = () => {
+    setDragOverId(null);
+  };
+
+  const handleDrop = (e: React.DragEvent, targetId: string | null) => {
+    e.preventDefault();
+    if (!draggedId || !canDrop(draggedId, targetId)) return;
+    updateGoal(draggedId, { parentId: targetId });
+    if (targetId) {
+      setExpandedGoals((prev) => new Set([...prev, targetId]));
+    }
+    setDraggedId(null);
+    setDragOverId(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedId(null);
+    setDragOverId(null);
   };
 
   const resetGoalForm = () => {
@@ -174,15 +297,26 @@ const Goals = () => {
   };
 
   const handleAddKeyResult = () => {
+    const errors: { title?: string; targetValue?: string } = {};
+
     if (!krForm.title.trim()) {
-      setKrFormErrors({ title: '请输入关键结果标题' });
+      errors.title = '请输入关键结果标题';
+    }
+
+    const targetValueNum = parseFloat(krForm.targetValue);
+    if (!krForm.targetValue || isNaN(targetValueNum) || targetValueNum <= 0) {
+      errors.targetValue = '目标值必须大于 0';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setKrFormErrors(errors);
       return;
     }
 
     const newKR = {
       goalId: selectedGoalId || '',
       title: krForm.title.trim(),
-      targetValue: parseFloat(krForm.targetValue) || 0,
+      targetValue: targetValueNum,
       currentValue: parseFloat(krForm.currentValue) || 0,
       unit: krForm.unit,
       weight: parseInt(krForm.weight) || 30,
@@ -192,6 +326,57 @@ const Goals = () => {
 
     addKeyResult(newKR);
     handleCloseKRModal();
+  };
+
+  const handleKRClick = (krId: string) => {
+    setSelectedKRId(selectedKRId === krId ? null : krId);
+    setIsKREditing(false);
+  };
+
+  const handleStartKREdit = () => {
+    if (!selectedKeyResult) return;
+    setKrEditForm({
+      targetValue: selectedKeyResult.targetValue.toString(),
+      currentValue: selectedKeyResult.currentValue.toString(),
+      weight: selectedKeyResult.weight.toString(),
+      ownerId: selectedKeyResult.ownerId,
+    });
+    setKrEditErrors({});
+    setIsKREditing(true);
+  };
+
+  const handleCancelKREdit = () => {
+    setIsKREditing(false);
+    setKrEditErrors({});
+  };
+
+  const handleSaveKREdit = () => {
+    if (!selectedKeyResult) return;
+
+    const errors: { targetValue?: string } = {};
+    const targetValueNum = parseFloat(krEditForm.targetValue);
+    if (!krEditForm.targetValue || isNaN(targetValueNum) || targetValueNum <= 0) {
+      errors.targetValue = '目标值必须大于 0';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setKrEditErrors(errors);
+      return;
+    }
+
+    updateKeyResult(selectedKeyResult.id, {
+      targetValue: targetValueNum,
+      currentValue: parseFloat(krEditForm.currentValue) || 0,
+      weight: parseInt(krEditForm.weight) || 0,
+      ownerId: krEditForm.ownerId,
+    });
+
+    setIsKREditing(false);
+  };
+
+  const handleTaskStatusToggle = (taskId: string, currentStatus: TaskStatus) => {
+    const nextStatus: TaskStatus = currentStatus === 'done' ? 'todo' : 'done';
+    updateTaskStatus(taskId, nextStatus);
   };
 
   const GoalNode = ({ goal, level = 0 }: { goal: Goal; level?: number }) => {
@@ -282,126 +467,225 @@ const Goals = () => {
 
   const AlignmentView = () => {
     const departmentGoals = rootGoals.filter((g) => g.type === 'department');
+    const unalignedPersonalGoals = goals.filter(
+      (g) => g.type === 'personal' && g.parentId === null && !g.archived
+    );
+
+    const PersonalGoalCard = ({ goal, index, total }: { goal: Goal; index: number; total: number }) => {
+      const progress = calculateGoalProgress(goal.id);
+      const owner = getUserById(goal.ownerId);
+      const isSelected = selectedGoalId === goal.id;
+      const isDragging = draggedId === goal.id;
+
+      return (
+        <div
+          key={goal.id}
+          className="relative"
+        >
+          {index < total - 1 && (
+            <div className="absolute left-0 top-1/2 w-3 h-px bg-gray-200 -translate-x-full" />
+          )}
+          {index === 0 && (
+            <div className="absolute left-0 bottom-1/2 w-3 h-1/2 border-l border-t border-gray-200 rounded-tl -translate-x-full" />
+          )}
+          {index === total - 1 && total > 1 && (
+            <div className="absolute left-0 top-1/2 w-3 h-1/2 border-l border-b border-gray-200 rounded-bl -translate-x-full" />
+          )}
+          {index > 0 && index < total - 1 && (
+            <div className="absolute left-0 top-0 w-3 h-full border-l border-gray-200 -translate-x-full" />
+          )}
+
+          <div
+            draggable
+            onDragStart={(e) => handleDragStart(e, goal.id)}
+            onDragEnd={handleDragEnd}
+            className={cn(
+              'p-4 rounded-xl bg-white border transition-all duration-200 cursor-pointer w-64',
+              'select-none active:cursor-grabbing cursor-grab',
+              isDragging ? 'opacity-50 shadow-lg scale-105' : '',
+              isSelected
+                ? 'border-emerald-300 shadow-md ring-2 ring-emerald-100'
+                : 'border-gray-100 hover:border-emerald-200 hover:shadow-sm'
+            )}
+            onClick={() => handleGoalClick(goal.id)}
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
+                个人目标
+              </span>
+              <StatusBadge status={goal.status} size="sm" />
+            </div>
+            <h5 className="font-medium text-gray-900 mb-2 text-sm leading-snug">
+              {goal.title}
+            </h5>
+            <div className="mb-2">
+              <ProgressBar percent={progress} size="sm" />
+            </div>
+            <div className="flex items-center justify-between">
+              {owner && (
+                <div className="flex items-center gap-2">
+                  <Avatar name={owner.name} size="sm" />
+                  <span className="text-xs text-gray-600">
+                    {owner.name}
+                  </span>
+                </div>
+              )}
+              <span className="text-xs text-gray-500">
+                {progress}%
+              </span>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const DepartmentGoalColumn = ({ deptGoal }: { deptGoal: Goal }) => {
+      const childGoals = getChildGoals(deptGoal.id);
+      const deptProgress = calculateGoalProgress(deptGoal.id);
+      const deptOwner = getUserById(deptGoal.ownerId);
+      const isDeptSelected = selectedGoalId === deptGoal.id;
+      const isDragOver = dragOverId === deptGoal.id && draggedId && canDrop(draggedId, deptGoal.id);
+
+      return (
+        <div key={deptGoal.id} className="flex gap-6">
+          <div className="w-72 flex-shrink-0">
+            <div
+              onDragOver={(e) => handleDragOver(e, deptGoal.id)}
+              onDragLeave={handleDragLeave}
+              onDrop={(e) => handleDrop(e, deptGoal.id)}
+              className={cn(
+                'p-5 rounded-xl bg-white border-2 transition-all duration-200 cursor-pointer',
+                isDeptSelected
+                  ? 'border-indigo-300 shadow-md ring-2 ring-indigo-100'
+                  : isDragOver
+                  ? 'border-indigo-400 bg-indigo-50/50 shadow-lg ring-2 ring-indigo-200'
+                  : 'border-gray-100 hover:border-indigo-200 hover:shadow-sm'
+              )}
+              onClick={() => handleGoalClick(deptGoal.id)}
+            >
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center">
+                  <Target size={16} className="text-indigo-600" />
+                </div>
+                <span className="text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
+                  部门目标
+                </span>
+              </div>
+              <h4 className="font-semibold text-gray-900 mb-2 leading-snug">
+                {deptGoal.title}
+              </h4>
+              <div className="mb-3">
+                <ProgressBar percent={deptProgress} size="sm" showLabel />
+              </div>
+              <div className="flex items-center justify-between">
+                {deptOwner && (
+                  <div className="flex items-center gap-2">
+                    <Avatar name={deptOwner.name} size="sm" />
+                    <span className="text-sm text-gray-600">
+                      {deptOwner.name}
+                    </span>
+                  </div>
+                )}
+                <StatusBadge status={deptGoal.status} size="sm" />
+              </div>
+            </div>
+
+            <div className="flex justify-center my-3">
+              <div className="w-px h-6 bg-gray-200" />
+            </div>
+          </div>
+
+          <div className="space-y-3 pt-12">
+            {childGoals.map((personalGoal, index) => (
+              <PersonalGoalCard
+                key={personalGoal.id}
+                goal={personalGoal}
+                index={index}
+                total={childGoals.length}
+              />
+            ))}
+            {childGoals.length === 0 && draggedId && canDrop(draggedId, deptGoal.id) && (
+              <div className="w-64 h-24 rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-sm">
+                拖拽到此处对齐
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
 
     return (
       <div className="overflow-x-auto">
         <div className="flex gap-6 min-w-max pb-4">
-          {departmentGoals.map((deptGoal) => {
-            const childGoals = getChildGoals(deptGoal.id);
-            const deptProgress = calculateGoalProgress(deptGoal.id);
-            const deptOwner = getUserById(deptGoal.ownerId);
-            const isDeptSelected = selectedGoalId === deptGoal.id;
+          {departmentGoals.map((deptGoal) => (
+            <DepartmentGoalColumn key={deptGoal.id} deptGoal={deptGoal} />
+          ))}
 
-            return (
-              <div key={deptGoal.id} className="flex gap-6">
-                <div className="w-72 flex-shrink-0">
-                  <div
-                    className={cn(
-                      'p-5 rounded-xl bg-white border transition-all duration-200 cursor-pointer',
-                      isDeptSelected
-                        ? 'border-indigo-300 shadow-md ring-2 ring-indigo-100'
-                        : 'border-gray-100 hover:border-indigo-200 hover:shadow-sm'
-                    )}
-                    onClick={() => handleGoalClick(deptGoal.id)}
-                  >
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center">
-                        <Target size={16} className="text-indigo-600" />
-                      </div>
-                      <span className="text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
-                        部门目标
-                      </span>
-                    </div>
-                    <h4 className="font-semibold text-gray-900 mb-2 leading-snug">
-                      {deptGoal.title}
-                    </h4>
-                    <div className="mb-3">
-                      <ProgressBar percent={deptProgress} size="sm" showLabel />
-                    </div>
-                    <div className="flex items-center justify-between">
-                      {deptOwner && (
-                        <div className="flex items-center gap-2">
-                          <Avatar name={deptOwner.name} size="sm" />
-                          <span className="text-sm text-gray-600">
-                            {deptOwner.name}
-                          </span>
-                        </div>
-                      )}
-                      <StatusBadge status={deptGoal.status} size="sm" />
-                    </div>
+          <div className="flex gap-6">
+            <div className="w-72 flex-shrink-0">
+              <div
+                onDragOver={(e) => handleDragOver(e, null)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, null)}
+                className={cn(
+                  'p-5 rounded-xl border-2 border-dashed transition-all duration-200',
+                  dragOverId === null && draggedId && canDrop(draggedId, null)
+                    ? 'border-amber-400 bg-amber-50/50 shadow-lg ring-2 ring-amber-200'
+                    : 'border-gray-200 bg-gray-50/50 hover:border-amber-300 hover:bg-amber-50/30'
+                )}
+              >
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="text-amber-600"
+                    >
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="8" x2="12" y2="12" />
+                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
                   </div>
-
-                  <div className="flex justify-center my-3">
-                    <div className="w-px h-6 bg-gray-200" />
-                  </div>
+                  <span className="text-xs font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded">
+                    未对齐
+                  </span>
                 </div>
-
-                <div className="space-y-3 pt-12">
-                  {childGoals.map((personalGoal, index) => {
-                    const progress = calculateGoalProgress(personalGoal.id);
-                    const owner = getUserById(personalGoal.ownerId);
-                    const isSelected = selectedGoalId === personalGoal.id;
-
-                    return (
-                      <div
-                        key={personalGoal.id}
-                        className="relative"
-                      >
-                        {index < childGoals.length - 1 && (
-                          <div className="absolute left-0 top-1/2 w-3 h-px bg-gray-200 -translate-x-full" />
-                        )}
-                        {index === 0 && (
-                          <div className="absolute left-0 bottom-1/2 w-3 h-1/2 border-l border-t border-gray-200 rounded-tl -translate-x-full" />
-                        )}
-                        {index === childGoals.length - 1 && childGoals.length > 1 && (
-                          <div className="absolute left-0 top-1/2 w-3 h-1/2 border-l border-b border-gray-200 rounded-bl -translate-x-full" />
-                        )}
-                        {index > 0 && index < childGoals.length - 1 && (
-                          <div className="absolute left-0 top-0 w-3 h-full border-l border-gray-200 -translate-x-full" />
-                        )}
-
-                        <div
-                          className={cn(
-                            'p-4 rounded-xl bg-white border transition-all duration-200 cursor-pointer w-64',
-                            isSelected
-                              ? 'border-emerald-300 shadow-md ring-2 ring-emerald-100'
-                              : 'border-gray-100 hover:border-emerald-200 hover:shadow-sm'
-                          )}
-                          onClick={() => handleGoalClick(personalGoal.id)}
-                        >
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className="text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
-                              个人目标
-                            </span>
-                            <StatusBadge status={personalGoal.status} size="sm" />
-                          </div>
-                          <h5 className="font-medium text-gray-900 mb-2 text-sm leading-snug">
-                            {personalGoal.title}
-                          </h5>
-                          <div className="mb-2">
-                            <ProgressBar percent={progress} size="sm" />
-                          </div>
-                          <div className="flex items-center justify-between">
-                            {owner && (
-                              <div className="flex items-center gap-2">
-                                <Avatar name={owner.name} size="sm" />
-                                <span className="text-xs text-gray-600">
-                                  {owner.name}
-                                </span>
-                              </div>
-                            )}
-                            <span className="text-xs text-gray-500">
-                              {progress}%
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                <h4 className="font-semibold text-gray-900 mb-2 leading-snug">
+                  未对齐目标
+                </h4>
+                <p className="text-xs text-gray-500">
+                  这些个人目标尚未与部门目标对齐，拖拽到部门目标下进行对齐
+                </p>
               </div>
-            );
-          })}
+
+              <div className="flex justify-center my-3">
+                <div className="w-px h-6 bg-gray-200" />
+              </div>
+            </div>
+
+            <div className="space-y-3 pt-12">
+              {unalignedPersonalGoals.map((personalGoal, index) => (
+                <PersonalGoalCard
+                  key={personalGoal.id}
+                  goal={personalGoal}
+                  index={index}
+                  total={unalignedPersonalGoals.length}
+                />
+              ))}
+              {unalignedPersonalGoals.length === 0 && (
+                <div className="w-64 h-24 rounded-xl border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 text-sm bg-gray-50/50">
+                  暂无未对齐目标
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -411,6 +695,7 @@ const Goals = () => {
     if (!selectedGoal) return null;
 
     const progress = calculateGoalProgress(selectedGoal.id);
+    const parentGoal = selectedGoal.parentId ? getGoalById(selectedGoal.parentId) : null;
 
     return (
       <div className="fixed right-0 top-0 h-full w-96 bg-white border-l border-gray-200 shadow-xl z-50 flex flex-col">
@@ -499,6 +784,54 @@ const Goals = () => {
                 </div>
               )}
             </div>
+            {parentGoal && (
+              <div className="bg-indigo-50 rounded-lg p-3">
+                <div className="flex items-center gap-2 text-xs text-indigo-500 mb-2">
+                  <Target size={12} />
+                  <span>父级目标</span>
+                </div>
+                <div
+                  className="flex items-center gap-2 cursor-pointer hover:bg-indigo-100/50 rounded-md p-1.5 -mx-1.5 transition-colors"
+                  onClick={() => handleGoalClick(parentGoal.id)}
+                >
+                  <div
+                    className={cn(
+                      'w-2 h-2 rounded-full flex-shrink-0',
+                      parentGoal.type === 'department' ? 'bg-indigo-500' : 'bg-emerald-500'
+                    )}
+                  />
+                  <p className="text-sm font-medium text-gray-900 truncate flex-1">
+                    {parentGoal.title}
+                  </p>
+                  <ChevronRight size={14} className="text-gray-400 flex-shrink-0" />
+                </div>
+              </div>
+            )}
+            {!parentGoal && selectedGoal.type === 'personal' && (
+              <div className="bg-amber-50 rounded-lg p-3">
+                <div className="flex items-center gap-2 text-xs text-amber-600 mb-1">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  <span>未对齐</span>
+                </div>
+                <p className="text-xs text-amber-700">
+                  该目标尚未与部门目标对齐
+                </p>
+              </div>
+            )}
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="flex items-center gap-2 text-xs text-gray-500 mb-1">
                 <Calendar size={12} />
@@ -523,16 +856,23 @@ const Goals = () => {
             </div>
             <div className="space-y-2">
               {selectedGoalKeyResults.map((kr: KeyResult) => {
-                const krProgress = Math.min(
-                  100,
-                  Math.round((kr.currentValue / kr.targetValue) * 100)
-                );
+                const krProgress =
+                  kr.targetValue > 0 && !isNaN(kr.targetValue)
+                    ? Math.min(100, Math.round((kr.currentValue / kr.targetValue) * 100))
+                    : 0;
                 const krOwner = getUserById(kr.ownerId);
+                const isSelected = selectedKRId === kr.id;
 
                 return (
                   <div
                     key={kr.id}
-                    className="bg-white border border-gray-100 rounded-lg p-3 hover:border-gray-200 transition-colors"
+                    className={cn(
+                      'bg-white border rounded-lg p-3 hover:border-indigo-200 transition-colors cursor-pointer',
+                      isSelected
+                        ? 'border-indigo-300 bg-indigo-50/50 ring-2 ring-indigo-100'
+                        : 'border-gray-100'
+                    )}
+                    onClick={() => handleKRClick(kr.id)}
                   >
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <h5 className="text-sm font-medium text-gray-900 leading-snug">
@@ -568,6 +908,341 @@ const Goals = () => {
               {selectedGoalKeyResults.length === 0 && (
                 <div className="text-center py-6 text-gray-400 text-sm">
                   暂无关键结果
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const KRDetailSidebar = () => {
+    if (!selectedKeyResult || !selectedGoal) return null;
+
+    const getPriorityColor = (priority: string) => {
+      switch (priority) {
+        case 'urgent':
+          return 'text-red-600 bg-red-50';
+        case 'high':
+          return 'text-orange-600 bg-orange-50';
+        case 'medium':
+          return 'text-amber-600 bg-amber-50';
+        case 'low':
+          return 'text-green-600 bg-green-50';
+        default:
+          return 'text-gray-600 bg-gray-50';
+      }
+    };
+
+    const getPriorityLabel = (priority: string) => {
+      switch (priority) {
+        case 'urgent':
+          return '紧急';
+        case 'high':
+          return '高';
+        case 'medium':
+          return '中';
+        case 'low':
+          return '低';
+        default:
+          return priority;
+      }
+    };
+
+    const getStatusLabel = (status: string) => {
+      switch (status) {
+        case 'todo':
+          return '待办';
+        case 'in_progress':
+          return '进行中';
+        case 'done':
+          return '已完成';
+        default:
+          return status;
+      }
+    };
+
+    return (
+      <div className="fixed right-0 top-0 h-full w-96 bg-white border-l border-gray-200 shadow-xl z-50 flex flex-col">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <button
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+              onClick={() => setSelectedKRId(null)}
+            >
+              <ArrowLeft size={18} />
+            </button>
+            <h3 className="font-semibold text-gray-900">关键结果详情</h3>
+          </div>
+          <button
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            onClick={() => {
+              setSelectedKRId(null);
+              setSelectedGoalId(null);
+            }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-6">
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
+                关键结果
+              </span>
+              <StatusBadge status={selectedKeyResult.status} size="sm" />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">
+              {selectedKeyResult.title}
+            </h2>
+            <p className="text-sm text-gray-500">
+              所属目标：{selectedGoal.title}
+            </p>
+          </div>
+
+          <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-gray-700">当前进度</span>
+              <span className="text-lg font-bold text-indigo-600">{krProgress}%</span>
+            </div>
+            <ProgressBar percent={krProgress} size="lg" />
+            <div className="flex items-center justify-between mt-3 text-xs text-gray-600">
+              <span>当前：{selectedKeyResult.currentValue}{selectedKeyResult.unit}</span>
+              <span>目标：{selectedKeyResult.targetValue}{selectedKeyResult.unit}</span>
+            </div>
+          </div>
+
+          {!isKREditing ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                  <Target size={16} className="text-gray-400" />
+                  基本信息
+                </h4>
+                <Button size="sm" variant="ghost" onClick={handleStartKREdit}>
+                  <Edit2 size={14} className="mr-1" />
+                  编辑
+                </Button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-xs text-gray-500 mb-1">
+                    <Target size={12} />
+                    <span>目标值</span>
+                  </div>
+                  <p className="text-sm font-medium text-gray-900">
+                    {selectedKeyResult.targetValue}{selectedKeyResult.unit}
+                  </p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-xs text-gray-500 mb-1">
+                    <CheckCircle size={12} />
+                    <span>当前值</span>
+                  </div>
+                  <p className="text-sm font-medium text-gray-900">
+                    {selectedKeyResult.currentValue}{selectedKeyResult.unit}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-xs text-gray-500 mb-1">
+                    <Scale size={12} />
+                    <span>权重</span>
+                  </div>
+                  <p className="text-sm font-medium text-gray-900">
+                    {selectedKeyResult.weight}%
+                  </p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-xs text-gray-500 mb-1">
+                    <User size={12} />
+                    <span>负责人</span>
+                  </div>
+                  {selectedKROwner && (
+                    <div className="flex items-center gap-2">
+                      <Avatar name={selectedKROwner.name} size="sm" />
+                      <p className="text-sm font-medium text-gray-900">
+                        {selectedKROwner.name}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                  <Edit2 size={16} className="text-indigo-500" />
+                  编辑关键结果
+                </h4>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Input
+                  label="目标值"
+                  type="number"
+                  value={krEditForm.targetValue}
+                  onChange={(value) => {
+                    setKrEditForm({ ...krEditForm, targetValue: value });
+                    if (krEditErrors.targetValue) {
+                      setKrEditErrors({ ...krEditErrors, targetValue: undefined });
+                    }
+                  }}
+                  error={krEditErrors.targetValue}
+                />
+                <Input
+                  label="当前值"
+                  type="number"
+                  value={krEditForm.currentValue}
+                  onChange={(value) => setKrEditForm({ ...krEditForm, currentValue: value })}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Input
+                  label="权重 (%)"
+                  type="number"
+                  value={krEditForm.weight}
+                  onChange={(value) => setKrEditForm({ ...krEditForm, weight: value })}
+                />
+                <Select
+                  label="负责人"
+                  value={krEditForm.ownerId}
+                  onChange={(value) => setKrEditForm({ ...krEditForm, ownerId: value })}
+                  options={users.map((u) => ({ value: u.id, label: u.name }))}
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <Button variant="secondary" className="flex-1" onClick={handleCancelKREdit}>
+                  <XCircle size={14} className="mr-1.5" />
+                  取消
+                </Button>
+                <Button className="flex-1" onClick={handleSaveKREdit}>
+                  <Save size={14} className="mr-1.5" />
+                  保存
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                <FileText size={16} className="text-gray-400" />
+                关联任务 ({krTasks.length})
+              </h4>
+              <span className="text-xs text-gray-500">
+                完成率：{krTaskCompletion}%
+              </span>
+            </div>
+            <div className="space-y-2">
+              {krTasks.map((task: Task) => {
+                const taskAssignee = getUserById(task.assigneeId);
+                return (
+                  <div
+                    key={task.id}
+                    className="bg-gray-50 rounded-lg p-3 hover:bg-gray-100 transition-colors"
+                  >
+                    <div className="flex items-start gap-3">
+                      <button
+                        className={cn(
+                          'w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors',
+                          task.status === 'done'
+                            ? 'bg-green-500 border-green-500 text-white'
+                            : 'border-gray-300 hover:border-indigo-400'
+                        )}
+                        onClick={() => handleTaskStatusToggle(task.id, task.status)}
+                      >
+                        {task.status === 'done' && <CheckCircle size={12} />}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <h5 className={cn(
+                          'text-sm font-medium leading-snug mb-1',
+                          task.status === 'done' ? 'text-gray-400 line-through' : 'text-gray-900'
+                        )}>
+                          {task.title}
+                        </h5>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={cn(
+                            'text-xs px-1.5 py-0.5 rounded font-medium',
+                            getPriorityColor(task.priority)
+                          )}>
+                            {getPriorityLabel(task.priority)}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {getStatusLabel(task.status)}
+                          </span>
+                          {taskAssignee && (
+                            <div className="flex items-center gap-1">
+                              <Avatar name={taskAssignee.name} size="sm" />
+                              <span className="text-xs text-gray-500">
+                                {taskAssignee.name}
+                              </span>
+                            </div>
+                          )}
+                          <span className="text-xs text-gray-400 flex items-center gap-1">
+                            <Calendar size={10} />
+                            {formatDate(task.dueDate)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {krTasks.length === 0 && (
+                <div className="text-center py-6 text-gray-400 text-sm">
+                  暂无关联任务
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <h4 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+              <Clock size={16} className="text-gray-400" />
+              进展记录 ({krProgresses.length})
+            </h4>
+            <div className="space-y-3">
+              {krProgresses.map((progress) => {
+                const author = getUserById(progress.authorId);
+                return (
+                  <div key={progress.id} className="bg-gray-50 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-indigo-600">
+                          {progress.progressPercent}%
+                        </span>
+                        {author && (
+                          <div className="flex items-center gap-1.5">
+                            <Avatar name={author.name} size="sm" />
+                            <span className="text-xs text-gray-600">
+                              {author.name}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-xs text-gray-400">
+                        {formatDate(progress.createdAt)}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-700 leading-relaxed mb-2">
+                      {progress.content}
+                    </p>
+                    {progress.attachments.length > 0 && (
+                      <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                        <Paperclip size={12} />
+                        <span>{progress.attachments.length} 个附件</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {krProgresses.length === 0 && (
+                <div className="text-center py-6 text-gray-400 text-sm">
+                  暂无进展记录
                 </div>
               )}
             </div>
@@ -639,7 +1314,7 @@ const Goals = () => {
         </div>
       </div>
 
-      <DetailSidebar />
+      {selectedKRId ? <KRDetailSidebar /> : <DetailSidebar />}
 
       <Modal
         isOpen={isGoalModalOpen}
@@ -791,8 +1466,14 @@ const Goals = () => {
               label="目标值"
               type="number"
               value={krForm.targetValue}
-              onChange={(value) => setKrForm({ ...krForm, targetValue: value })}
+              onChange={(value) => {
+                setKrForm({ ...krForm, targetValue: value });
+                if (krFormErrors.targetValue) {
+                  setKrFormErrors({ ...krFormErrors, targetValue: undefined });
+                }
+              }}
               placeholder="请输入目标值"
+              error={krFormErrors.targetValue}
             />
             <Input
               label="当前值"

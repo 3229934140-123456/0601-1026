@@ -143,13 +143,12 @@ export const Risks = () => {
   };
 
   const getNextStatusText = (status: RiskStatus): string => {
-    const next = getNextStatus(status);
     const textMap: Record<RiskStatus, string> = {
       open: '开始缓解',
       mitigating: '标记已解决',
       resolved: '重新打开',
     };
-    return textMap[next];
+    return textMap[status];
   };
 
   const RiskCard = ({ risk }: { risk: (typeof risks)[0] }) => {
