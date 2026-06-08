@@ -23,7 +23,7 @@ export const Header = ({ title, subtitle }: HeaderProps) => {
   const searchRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
-  const { goals, tasks, users, getGoalById, getUserById, setSelectedGoalId } = useStore();
+  const { goals, tasks, users, getGoalById, getUserById, setSelectedGoalId, setSelectedKRId } = useStore();
 
   const searchResults = useMemo<SearchResult[]>(() => {
     if (!searchQuery.trim()) return [];
@@ -92,6 +92,7 @@ export const Header = ({ title, subtitle }: HeaderProps) => {
   const handleResultClick = (result: SearchResult) => {
     if (result.type === 'goal') {
       setSelectedGoalId(result.id);
+      setSelectedKRId(null);
     }
     navigate(result.path);
     setSearchQuery('');

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, DragEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   LayoutGrid,
   List,
@@ -11,13 +12,15 @@ import {
   Plus,
   ChevronRight,
   User,
+  MessageSquare,
+  ExternalLink,
 } from 'lucide-react';
 import { Layout } from '../components/Layout/Layout';
 import { StatusBadge } from '../components/StatusBadge';
 import { Avatar } from '../components/Avatar';
 import { Modal, Button, Input, Textarea, Select } from '../components/Modal';
 import { useStore } from '../store/useStore';
-import { cn, formatShortDate, getPriorityColor, getPriorityText } from '../utils/helpers';
+import { cn, formatShortDate, formatDateTime, getPriorityColor, getPriorityText } from '../utils/helpers';
 import { TaskStatus, TaskPriority } from '../types';
 
 const statusColumns: { status: TaskStatus; title: string; color: string }[] = [
@@ -30,16 +33,19 @@ type SortField = 'title' | 'priority' | 'dueDate' | 'createdAt';
 type SortOrder = 'asc' | 'desc';
 
 export const Tasks = () => {
+  const navigate = useNavigate();
   const {
     tasks,
     keyResults,
     users,
+    meetings,
     taskViewMode,
     setTaskViewMode,
     addTask,
     updateTaskStatus,
     getUserById,
     getGoalById,
+    setSelectedMeetingId,
   } = useStore();
 
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
@@ -548,6 +554,59 @@ export const Tasks = () => {
                               <p className="text-sm text-gray-700">{goal.title}</p>
                             </div>
                           )}
+                          {task.meetingId && task.actionItemId && (() => {
+                            const meeting = meetings.find((m) => m.id === task.meetingId);
+                            const actionItem = meeting?.actionItems.find((item) => item.id === task.actionItemId);
+                            const isSourceValid = meeting && actionItem;
+
+                            return (
+                              <div>
+                                <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+                                  来源会议
+                                </h5>
+                                {isSourceValid ? (
+                                  <div className="bg-white rounded-lg border border-gray-200 p-3">
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-2">
+                                          <MessageSquare className="w-4 h-4 text-indigo-500 shrink-0" />
+                                          <p className="text-sm font-medium text-gray-900 truncate">
+                                            {meeting.title}
+                                          </p>
+                                        </div>
+                                        <p className="text-sm text-gray-600 mb-2 line-clamp-2">
+                                          行动项：{actionItem.content}
+                                        </p>
+                                        <p className="text-xs text-gray-400">
+                                          创建时间：{formatDateTime(meeting.createdAt)}
+                                        </p>
+                                      </div>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setSelectedMeetingId(meeting.id);
+                                          navigate('/meetings');
+                                        }}
+                                        className="shrink-0 flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors"
+                                      >
+                                        <ExternalLink className="w-3 h-3" />
+                                        查看会议
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="bg-gray-100 rounded-lg border border-gray-200 p-3">
+                                    <div className="flex items-center gap-2">
+                                      <MessageSquare className="w-4 h-4 text-gray-400 shrink-0" />
+                                      <p className="text-sm text-gray-500">
+                                        来源已移除
+                                      </p>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                           <div className="flex items-center gap-6 pt-2">
                             <div className="flex items-center gap-2">
                               <User className="w-4 h-4 text-gray-400" />

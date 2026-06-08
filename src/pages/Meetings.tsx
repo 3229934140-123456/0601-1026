@@ -57,6 +57,7 @@ export const Meetings = () => {
     updateMeeting,
     addActionItemWithTask,
     toggleActionItemComplete,
+    deleteActionItem,
   } = useStore();
   const navigate = useNavigate();
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
@@ -107,11 +108,7 @@ export const Meetings = () => {
   };
 
   const handleDeleteActionItem = (meetingId: string, actionItemId: string) => {
-    const meeting = meetings.find((m) => m.id === meetingId);
-    if (meeting) {
-      const newActionItems = meeting.actionItems.filter((item) => item.id !== actionItemId);
-      updateMeeting(meetingId, { actionItems: newActionItems });
-    }
+    deleteActionItem(meetingId, actionItemId);
   };
 
   const openCreateModal = () => {

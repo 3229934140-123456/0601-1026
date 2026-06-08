@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react';
-import { ChevronRight, ChevronDown, ListTree, AlignHorizontalJustifyEnd, X, Target, Calendar, Scale, User, CheckCircle, Plus, Edit2, Save, XCircle, FileText, Clock, Paperclip, ArrowLeft } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { ChevronRight, ChevronDown, ListTree, AlignHorizontalJustifyEnd, X, Target, Calendar, Scale, User, CheckCircle, Plus, Edit2, Save, XCircle, FileText, Clock, Paperclip, ArrowLeft, Activity, AlertTriangle, CheckSquare } from 'lucide-react';
 import { Layout } from '../components/Layout/Layout';
 import { ProgressBar } from '../components/ProgressBar';
 import { StatusBadge } from '../components/StatusBadge';
@@ -7,18 +8,25 @@ import { Avatar } from '../components/Avatar';
 import { Modal, Button, Input, Textarea, Select } from '../components/Modal';
 import { useStore } from '../store/useStore';
 import { cn, formatDate } from '../utils/helpers';
-import type { Goal, KeyResult, GoalType, Task, TaskStatus } from '../types';
+import type { Goal, KeyResult, GoalType, Task, TaskStatus, TaskPriority } from '../types';
 
 const Goals = () => {
   const {
     goals,
+    keyResults,
     users,
+    tasks,
+    progresses,
+    risks,
     selectedGoalId,
     setSelectedGoalId,
+    selectedKRId,
+    setSelectedKRId,
     viewMode,
     setViewMode,
     addGoal,
     addKeyResult,
+    addTask,
     updateKeyResult,
     updateTaskStatus,
     updateGoal,
@@ -31,14 +39,17 @@ const Goals = () => {
     getGoalById,
   } = useStore();
 
+  const navigate = useNavigate();
+
   const [expandedGoals, setExpandedGoals] = useState<Set<string>>(new Set(['goal-1', 'goal-2']));
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [isKRModalOpen, setIsKRModalOpen] = useState(false);
-  const [selectedKRId, setSelectedKRId] = useState<string | null>(null);
   const [isKREditing, setIsKREditing] = useState(false);
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [taskFormErrors, setTaskFormErrors] = useState<{ title?: string }>({});
   const [krEditForm, setKrEditForm] = useState({
     targetValue: '',
     currentValue: '',
@@ -69,6 +80,13 @@ const Goals = () => {
     unit: '%',
     weight: '30',
     ownerId: '',
+  });
+
+  const [taskForm, setTaskForm] = useState({
+    title: '',
+    assigneeId: '',
+    priority: 'medium' as TaskPriority,
+    dueDate: '',
   });
 
   const rootGoals = useMemo(() => {
@@ -169,6 +187,152 @@ const Goals = () => {
 
   const handleGoalClick = (goalId: string) => {
     setSelectedGoalId(selectedGoalId === goalId ? null : goalId);
+  };
+
+  useEffect(() => {
+    if (!selectedGoalId || !selectedKRId) return;
+    const krBelongsToGoal = selectedGoalKeyResults.some((kr) => kr.id === selectedKRId);
+    if (!krBelongsToGoal) {
+      setSelectedKRId(null);
+    }
+  }, [selectedGoalId, selectedKRId, selectedGoalKeyResults, setSelectedKRId]);
+
+  const goalActivities = useMemo(() => {
+    if (!selectedGoalId) return [];
+
+    const krIds = selectedGoalKeyResults.map((kr) => kr.id);
+
+    type ActivityItem = {
+      id: string;
+      type: 'progress' | 'task' | 'risk';
+      icon: React.ReactNode;
+      title: string;
+      description: string;
+      time: string;
+      targetId: string;
+      color: string;
+    };
+
+    const activities: ActivityItem[] = [];
+
+    progresses
+      .filter((p) => krIds.includes(p.keyResultId))
+      .forEach((progress) => {
+        const author = getUserById(progress.authorId);
+        const kr = keyResults.find((k) => k.id === progress.keyResultId);
+        activities.push({
+          id: `progress-${progress.id}`,
+          type: 'progress',
+          icon: <Activity size={14} />,
+          title: `${author?.name || '未知用户'} 更新了进展`,
+          description: `${kr?.title || '关键结果'} · ${progress.progressPercent}%`,
+          time: progress.createdAt,
+          targetId: progress.keyResultId,
+          color: 'text-indigo-600 bg-indigo-50',
+        });
+      });
+
+    tasks
+      .filter((t) => krIds.includes(t.keyResultId) && t.status === 'done')
+      .forEach((task) => {
+        const assignee = getUserById(task.assigneeId);
+        activities.push({
+          id: `task-${task.id}`,
+          type: 'task',
+          icon: <CheckSquare size={14} />,
+          title: `${assignee?.name || '未知用户'} 完成了任务`,
+          description: task.title,
+          time: task.createdAt,
+          targetId: task.id,
+          color: 'text-green-600 bg-green-50',
+        });
+      });
+
+    risks
+      .filter((r) => r.goalId === selectedGoalId)
+      .forEach((risk) => {
+        const levelLabels: Record<string, string> = {
+          low: '低',
+          medium: '中',
+          high: '高',
+          critical: '紧急',
+        };
+        const statusLabels: Record<string, string> = {
+          open: '已打开',
+          mitigating: '缓解中',
+          resolved: '已解决',
+        };
+        activities.push({
+          id: `risk-${risk.id}`,
+          type: 'risk',
+          icon: <AlertTriangle size={14} />,
+          title: `风险${statusLabels[risk.status] || risk.status}`,
+          description: `${risk.title} · ${levelLabels[risk.level] || risk.level}风险`,
+          time: risk.updatedAt,
+          targetId: risk.id,
+          color: 'text-amber-600 bg-amber-50',
+        });
+      });
+
+    return activities.sort(
+      (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()
+    );
+  }, [selectedGoalId, selectedGoalKeyResults, progresses, tasks, risks, keyResults, getUserById]);
+
+  const handleActivityClick = (activity: { type: string; targetId: string }) => {
+    if (activity.type === 'progress') {
+      setSelectedKRId(activity.targetId);
+    } else if (activity.type === 'task') {
+      navigate('/tasks');
+    } else if (activity.type === 'risk') {
+      navigate('/risks');
+    }
+  };
+
+  const resetTaskForm = () => {
+    setTaskForm({
+      title: '',
+      assigneeId: '',
+      priority: 'medium',
+      dueDate: '',
+    });
+    setTaskFormErrors({});
+  };
+
+  const handleOpenTaskModal = () => {
+    resetTaskForm();
+    setIsTaskModalOpen(true);
+  };
+
+  const handleCloseTaskModal = () => {
+    setIsTaskModalOpen(false);
+    resetTaskForm();
+  };
+
+  const handleAddTask = () => {
+    const errors: { title?: string } = {};
+
+    if (!taskForm.title.trim()) {
+      errors.title = '请输入任务标题';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setTaskFormErrors(errors);
+      return;
+    }
+
+    const newTask = {
+      title: taskForm.title.trim(),
+      description: '',
+      keyResultId: selectedKRId || '',
+      assigneeId: taskForm.assigneeId || selectedKROwner?.id || users[0]?.id || '',
+      priority: taskForm.priority,
+      status: 'todo' as const,
+      dueDate: taskForm.dueDate || new Date().toISOString().split('T')[0],
+    };
+
+    addTask(newTask);
+    handleCloseTaskModal();
   };
 
   const handleDragStart = (e: React.DragEvent, goalId: string) => {
@@ -912,6 +1076,46 @@ const Goals = () => {
               )}
             </div>
           </div>
+
+          <div className="space-y-3">
+            <h4 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+              <Activity size={16} className="text-gray-400" />
+              协作动态 ({goalActivities.length})
+            </h4>
+            <div className="space-y-1">
+              {goalActivities.map((activity) => (
+                <div
+                  key={activity.id}
+                  className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                  onClick={() => handleActivityClick(activity)}
+                >
+                  <div className={cn(
+                    'w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5',
+                    activity.color
+                  )}>
+                    {activity.icon}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 leading-snug">
+                      {activity.title}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5 truncate">
+                      {activity.description}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {formatDate(activity.time)}
+                    </p>
+                  </div>
+                  <ChevronRight size={14} className="text-gray-300 flex-shrink-0 mt-1" />
+                </div>
+              ))}
+              {goalActivities.length === 0 && (
+                <div className="text-center py-6 text-gray-400 text-sm">
+                  暂无协作动态
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -1133,9 +1337,15 @@ const Goals = () => {
                 <FileText size={16} className="text-gray-400" />
                 关联任务 ({krTasks.length})
               </h4>
-              <span className="text-xs text-gray-500">
-                完成率：{krTaskCompletion}%
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500">
+                  完成率：{krTaskCompletion}%
+                </span>
+                <Button size="sm" variant="ghost" onClick={handleOpenTaskModal}>
+                  <Plus size={14} className="mr-1" />
+                  新建
+                </Button>
+              </div>
             </div>
             <div className="space-y-2">
               {krTasks.map((task: Task) => {
@@ -1506,6 +1716,66 @@ const Goals = () => {
             onChange={(value) => setKrForm({ ...krForm, ownerId: value })}
             options={users.map((u) => ({ value: u.id, label: u.name }))}
             placeholder="请选择负责人"
+          />
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isTaskModalOpen}
+        onClose={handleCloseTaskModal}
+        title="新建任务"
+        size="md"
+        footer={
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" onClick={handleCloseTaskModal}>
+              取消
+            </Button>
+            <Button onClick={handleAddTask}>
+              创建任务
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <Input
+            label="任务标题"
+            value={taskForm.title}
+            onChange={(value) => {
+              setTaskForm({ ...taskForm, title: value });
+              if (taskFormErrors.title) {
+                setTaskFormErrors({ ...taskFormErrors, title: undefined });
+              }
+            }}
+            placeholder="请输入任务标题"
+            error={taskFormErrors.title}
+          />
+
+          <div className="grid grid-cols-2 gap-4">
+            <Select
+              label="负责人"
+              value={taskForm.assigneeId}
+              onChange={(value) => setTaskForm({ ...taskForm, assigneeId: value })}
+              options={users.map((u) => ({ value: u.id, label: u.name }))}
+              placeholder="请选择负责人"
+            />
+            <Select
+              label="优先级"
+              value={taskForm.priority}
+              onChange={(value) => setTaskForm({ ...taskForm, priority: value as TaskPriority })}
+              options={[
+                { value: 'low', label: '低' },
+                { value: 'medium', label: '中' },
+                { value: 'high', label: '高' },
+                { value: 'urgent', label: '紧急' },
+              ]}
+            />
+          </div>
+
+          <Input
+            label="截止日期"
+            type="date"
+            value={taskForm.dueDate}
+            onChange={(value) => setTaskForm({ ...taskForm, dueDate: value })}
           />
         </div>
       </Modal>

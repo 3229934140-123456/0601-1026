@@ -36,12 +36,16 @@ interface AppState {
   meetings: Meeting[];
   activities: Activity[];
   selectedGoalId: string | null;
+  selectedKRId: string | null;
   viewMode: 'tree' | 'alignment';
   taskViewMode: 'kanban' | 'list';
+  selectedMeetingId: string | null;
   
   setSelectedGoalId: (id: string | null) => void;
+  setSelectedKRId: (id: string | null) => void;
   setViewMode: (mode: 'tree' | 'alignment') => void;
   setTaskViewMode: (mode: 'kanban' | 'list') => void;
+  setSelectedMeetingId: (id: string | null) => void;
   
   addGoal: (goal: Omit<Goal, 'id' | 'createdAt'>) => void;
   updateGoal: (id: string, updates: Partial<Goal>) => void;
@@ -67,6 +71,7 @@ interface AppState {
   updateActionItem: (meetingId: string, actionItemId: string, updates: Partial<ActionItem>) => void;
   addActionItemWithTask: (meetingId: string, actionItem: Omit<ActionItem, 'id'>, syncToTask?: boolean, krId?: string) => ActionItem;
   toggleActionItemComplete: (meetingId: string, actionItemId: string) => void;
+  deleteActionItem: (meetingId: string, actionItemId: string) => void;
   
   getUserById: (id: string) => User | undefined;
   getGoalById: (id: string) => Goal | undefined;
@@ -92,12 +97,16 @@ export const useStore = create<AppState>((set, get) => ({
   meetings: mockMeetings,
   activities: mockActivities,
   selectedGoalId: null,
+  selectedKRId: null,
   viewMode: 'tree',
   taskViewMode: 'kanban',
+  selectedMeetingId: null,
 
   setSelectedGoalId: (id) => set({ selectedGoalId: id }),
+  setSelectedKRId: (id) => set({ selectedKRId: id }),
   setViewMode: (mode) => set({ viewMode: mode }),
   setTaskViewMode: (mode) => set({ taskViewMode: mode }),
+  setSelectedMeetingId: (id) => set({ selectedMeetingId: id }),
 
   addGoal: (goal) =>
     set((state) => ({
@@ -297,6 +306,38 @@ export const useStore = create<AppState>((set, get) => ({
       const updatedTasks = updatedTask
         ? state.tasks.map((t) => (t.id === updatedTask!.id ? updatedTask! : t))
         : state.tasks;
+
+      return {
+        meetings: updatedMeetings,
+        tasks: updatedTasks,
+      };
+    });
+  },
+
+  deleteActionItem: (meetingId, actionItemId) => {
+    set((state) => {
+      const meeting = state.meetings.find((m) => m.id === meetingId);
+      const actionItem = meeting?.actionItems.find((item) => item.id === actionItemId);
+
+      const updatedMeetings = state.meetings.map((m) => {
+        if (m.id !== meetingId) return m;
+        return {
+          ...m,
+          actionItems: m.actionItems.filter((item) => item.id !== actionItemId),
+        };
+      });
+
+      let updatedTasks = state.tasks;
+      if (actionItem?.taskId) {
+        updatedTasks = state.tasks.map((t) => {
+          if (t.id !== actionItem.taskId) return t;
+          return {
+            ...t,
+            meetingId: undefined,
+            actionItemId: undefined,
+          };
+        });
+      }
 
       return {
         meetings: updatedMeetings,
