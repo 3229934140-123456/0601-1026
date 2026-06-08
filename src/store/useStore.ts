@@ -40,12 +40,14 @@ interface AppState {
   viewMode: 'tree' | 'alignment';
   taskViewMode: 'kanban' | 'list';
   selectedMeetingId: string | null;
+  selectedTaskId: string | null;
   
   setSelectedGoalId: (id: string | null) => void;
   setSelectedKRId: (id: string | null) => void;
   setViewMode: (mode: 'tree' | 'alignment') => void;
   setTaskViewMode: (mode: 'kanban' | 'list') => void;
   setSelectedMeetingId: (id: string | null) => void;
+  setSelectedTaskId: (id: string | null) => void;
   
   addGoal: (goal: Omit<Goal, 'id' | 'createdAt'>) => void;
   updateGoal: (id: string, updates: Partial<Goal>) => void;
@@ -101,12 +103,14 @@ export const useStore = create<AppState>((set, get) => ({
   viewMode: 'tree',
   taskViewMode: 'kanban',
   selectedMeetingId: null,
+  selectedTaskId: null,
 
   setSelectedGoalId: (id) => set({ selectedGoalId: id }),
   setSelectedKRId: (id) => set({ selectedKRId: id }),
   setViewMode: (mode) => set({ viewMode: mode }),
   setTaskViewMode: (mode) => set({ taskViewMode: mode }),
   setSelectedMeetingId: (id) => set({ selectedMeetingId: id }),
+  setSelectedTaskId: (id) => set({ selectedTaskId: id }),
 
   addGoal: (goal) =>
     set((state) => ({
@@ -333,8 +337,7 @@ export const useStore = create<AppState>((set, get) => ({
           if (t.id !== actionItem.taskId) return t;
           return {
             ...t,
-            meetingId: undefined,
-            actionItemId: undefined,
+            actionItemRemoved: true,
           };
         });
       }

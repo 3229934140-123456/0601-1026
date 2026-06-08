@@ -18,10 +18,13 @@ const Goals = () => {
     tasks,
     progresses,
     risks,
+    meetings,
     selectedGoalId,
     setSelectedGoalId,
     selectedKRId,
     setSelectedKRId,
+    selectedMeetingId,
+    setSelectedMeetingId,
     viewMode,
     setViewMode,
     addGoal,
@@ -204,12 +207,13 @@ const Goals = () => {
 
     type ActivityItem = {
       id: string;
-      type: 'progress' | 'task' | 'risk';
+      type: 'progress' | 'task' | 'risk' | 'meeting';
       icon: React.ReactNode;
       title: string;
       description: string;
       time: string;
       targetId: string;
+      targetType: string;
       color: string;
     };
 
@@ -228,6 +232,7 @@ const Goals = () => {
           description: `${kr?.title || '关键结果'} · ${progress.progressPercent}%`,
           time: progress.createdAt,
           targetId: progress.keyResultId,
+          targetType: 'keyResult',
           color: 'text-indigo-600 bg-indigo-50',
         });
       });
@@ -244,6 +249,7 @@ const Goals = () => {
           description: task.title,
           time: task.createdAt,
           targetId: task.id,
+          targetType: 'task',
           color: 'text-green-600 bg-green-50',
         });
       });
@@ -270,14 +276,37 @@ const Goals = () => {
           description: `${risk.title} · ${levelLabels[risk.level] || risk.level}风险`,
           time: risk.updatedAt,
           targetId: risk.id,
+          targetType: 'risk',
           color: 'text-amber-600 bg-amber-50',
         });
       });
 
+    meetings.forEach((meeting) => {
+      meeting.actionItems
+        .filter((item) => item.completed && item.taskId)
+        .forEach((actionItem) => {
+          const task = tasks.find((t) => t.id === actionItem.taskId);
+          if (!task) return;
+          const kr = keyResults.find((k) => k.id === task.keyResultId);
+          if (!kr || kr.goalId !== selectedGoalId) return;
+          activities.push({
+            id: `meeting-${meeting.id}-${actionItem.id}`,
+            type: 'meeting',
+            icon: <CheckSquare size={14} />,
+            title: '行动项已完成',
+            description: `${actionItem.content}（来自会议：${meeting.title}）`,
+            time: meeting.date || meeting.createdAt,
+            targetId: meeting.id,
+            targetType: 'meeting',
+            color: 'bg-emerald-100 text-emerald-600',
+          });
+        });
+    });
+
     return activities.sort(
       (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()
     );
-  }, [selectedGoalId, selectedGoalKeyResults, progresses, tasks, risks, keyResults, getUserById]);
+  }, [selectedGoalId, selectedGoalKeyResults, progresses, tasks, risks, meetings, keyResults, getUserById]);
 
   const handleActivityClick = (activity: { type: string; targetId: string }) => {
     if (activity.type === 'progress') {
@@ -286,6 +315,9 @@ const Goals = () => {
       navigate('/tasks');
     } else if (activity.type === 'risk') {
       navigate('/risks');
+    } else if (activity.type === 'meeting') {
+      setSelectedMeetingId(activity.targetId);
+      navigate('/meetings');
     }
   };
 

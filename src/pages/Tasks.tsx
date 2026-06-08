@@ -1,4 +1,4 @@
-import React, { useState, useMemo, DragEvent } from 'react';
+import React, { useState, useMemo, DragEvent, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   LayoutGrid,
@@ -46,6 +46,8 @@ export const Tasks = () => {
     getUserById,
     getGoalById,
     setSelectedMeetingId,
+    selectedTaskId,
+    setSelectedTaskId,
   } = useStore();
 
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
@@ -153,8 +155,16 @@ export const Tasks = () => {
   };
 
   const toggleTaskExpand = (taskId: string) => {
-    setExpandedTaskId(expandedTaskId === taskId ? null : taskId);
+    const newExpandedId = expandedTaskId === taskId ? null : taskId;
+    setExpandedTaskId(newExpandedId);
+    setSelectedTaskId(newExpandedId);
   };
+
+  useEffect(() => {
+    if (selectedTaskId) {
+      setExpandedTaskId(selectedTaskId);
+    }
+  }, [selectedTaskId]);
 
   const filteredTasks = useMemo(() => {
     let result = [...tasks];
@@ -258,6 +268,7 @@ export const Tasks = () => {
     const assignee = getUserById(task.assigneeId);
     const keyResult = getKeyResultById(task.keyResultId);
     const isOverdue = new Date(task.dueDate) < new Date() && task.status !== 'done';
+    const hasRemovedActionItem = task.actionItemRemoved && task.meetingId;
 
     return (
       <div
@@ -267,7 +278,8 @@ export const Tasks = () => {
         className={cn(
           'bg-white rounded-xl p-4 shadow-sm border border-gray-100 cursor-grab active:cursor-grabbing',
           'hover:shadow-md hover:border-indigo-200 transition-all duration-200',
-          draggedTaskId === task.id && 'opacity-50 rotate-2 scale-105'
+          draggedTaskId === task.id && 'opacity-50 rotate-2 scale-105',
+          hasRemovedActionItem && 'border-amber-200 bg-amber-50/30'
         )}
       >
         <div className="flex items-start justify-between gap-2 mb-3">
@@ -283,6 +295,13 @@ export const Tasks = () => {
             {getPriorityText(task.priority)}
           </span>
         </div>
+
+        {hasRemovedActionItem && (
+          <div className="flex items-center gap-1.5 mb-3 text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span>已取消会议同步</span>
+          </div>
+        )}
 
         {keyResult && (
           <div className="flex items-center gap-1.5 mb-3 text-xs text-gray-500">
@@ -482,6 +501,11 @@ export const Tasks = () => {
                           )}
                         />
                         <p className="text-sm font-medium text-gray-900">{task.title}</p>
+                        {task.actionItemRemoved && task.meetingId && (
+                          <span className="shrink-0 px-2 py-0.5 text-xs font-medium rounded-md bg-amber-100 text-amber-700">
+                            已取消同步
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-6 py-4">
@@ -554,10 +578,12 @@ export const Tasks = () => {
                               <p className="text-sm text-gray-700">{goal.title}</p>
                             </div>
                           )}
-                          {task.meetingId && task.actionItemId && (() => {
+                          {task.meetingId && (() => {
                             const meeting = meetings.find((m) => m.id === task.meetingId);
                             const actionItem = meeting?.actionItems.find((item) => item.id === task.actionItemId);
-                            const isSourceValid = meeting && actionItem;
+                            const isActionItemRemoved = task.actionItemRemoved;
+                            const isMeetingDeleted = !meeting;
+                            const isSourceValid = meeting && actionItem && !isActionItemRemoved;
 
                             return (
                               <div>
@@ -592,6 +618,48 @@ export const Tasks = () => {
                                         <ExternalLink className="w-3 h-3" />
                                         查看会议
                                       </button>
+                                    </div>
+                                  </div>
+                                ) : isActionItemRemoved && meeting ? (
+                                  <div className="bg-gray-50 rounded-lg border border-gray-200 p-3">
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-2">
+                                          <MessageSquare className="w-4 h-4 text-gray-400 shrink-0" />
+                                          <p className="text-sm font-medium text-gray-700 truncate">
+                                            {meeting.title}
+                                          </p>
+                                          <span className="shrink-0 px-2 py-0.5 text-xs font-medium rounded-md bg-gray-200 text-gray-600">
+                                            已取消同步
+                                          </span>
+                                        </div>
+                                        <p className="text-sm text-gray-500 mb-2">
+                                          行动项已从会议中移除
+                                        </p>
+                                        <p className="text-xs text-gray-400">
+                                          创建时间：{formatDateTime(meeting.createdAt)}
+                                        </p>
+                                      </div>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setSelectedMeetingId(meeting.id);
+                                          navigate('/meetings');
+                                        }}
+                                        className="shrink-0 flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                                      >
+                                        <ExternalLink className="w-3 h-3" />
+                                        查看会议
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : isMeetingDeleted ? (
+                                  <div className="bg-gray-100 rounded-lg border border-gray-200 p-3">
+                                    <div className="flex items-center gap-2">
+                                      <MessageSquare className="w-4 h-4 text-gray-400 shrink-0" />
+                                      <p className="text-sm text-gray-500">
+                                        来源会议已删除
+                                      </p>
                                     </div>
                                   </div>
                                 ) : (

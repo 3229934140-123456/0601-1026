@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   MessageSquare,
   Send,
@@ -8,6 +9,7 @@ import {
   X,
   Upload,
   File,
+  ArrowUpRight,
 } from 'lucide-react';
 import { Layout } from '../components/Layout/Layout';
 import { ProgressBar } from '../components/ProgressBar';
@@ -17,6 +19,7 @@ import { cn, formatDateTime, formatRelativeTime, formatFileSize } from '../utils
 import type { Progress as ProgressItem, KeyResult, User as UserType, Attachment } from '../types';
 
 export const Progress = () => {
+  const navigate = useNavigate();
   const {
     progresses,
     keyResults,
@@ -28,6 +31,8 @@ export const Progress = () => {
     updateKeyResult,
     currentUser,
     users,
+    setSelectedGoalId,
+    setSelectedKRId,
   } = useStore();
 
   const [expandedProgressId, setExpandedProgressId] = useState<string | null>(null);
@@ -166,12 +171,30 @@ export const Progress = () => {
 
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-semibold text-gray-900">{author?.name}</span>
                   <span className="text-sm text-gray-400">·</span>
-                  <span className="text-sm text-gray-500">
-                    更新了「{keyResult?.title}」的进度
-                  </span>
+                  <span className="text-sm text-gray-500">更新了</span>
+                  {keyResult && (() => {
+                    const goal = getGoalById(keyResult.goalId);
+                    return (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (goal) {
+                            setSelectedGoalId(goal.id);
+                          }
+                          setSelectedKRId(keyResult.id);
+                          navigate('/goals');
+                        }}
+                        className="inline-flex items-center gap-1 text-sm font-medium text-indigo-600 hover:text-indigo-700 transition-colors"
+                      >
+                        <span>「{keyResult.title}」</span>
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                      </button>
+                    );
+                  })()}
+                  <span className="text-sm text-gray-500">的进度</span>
                 </div>
                 <span
                   className="text-xs text-gray-400"

@@ -57,6 +57,7 @@ export interface Task {
   createdAt: string;
   meetingId?: string;
   actionItemId?: string;
+  actionItemRemoved?: boolean;
 }
 
 export interface Attachment {
