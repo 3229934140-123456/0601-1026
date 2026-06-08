@@ -13,12 +13,15 @@ import {
   User,
   Calendar,
   Filter,
+  Flag,
+  ArrowRight,
 } from 'lucide-react';
 import { Layout } from '../components/Layout/Layout';
 import { StatusBadge } from '../components/StatusBadge';
 import { Avatar } from '../components/Avatar';
+import { Modal, Button, Input, Textarea, Select } from '../components/Modal';
 import { useStore } from '../store/useStore';
-import { cn, formatDate, formatRelativeTime } from '../utils/helpers';
+import { cn, formatDate, formatRelativeTime, getStatusText, getStatusColor } from '../utils/helpers';
 import { RiskLevel, RiskStatus } from '../types';
 
 const statusColumns: { status: RiskStatus; title: string; color: string; icon: typeof AlertTriangle }[] = [
@@ -52,11 +55,21 @@ type ViewMode = 'kanban' | 'list';
 type FilterLevel = 'all' | RiskLevel;
 
 export const Risks = () => {
-  const { risks, getUserById, getGoalById } = useStore();
+  const { risks, goals, users, addRisk, updateRisk, getUserById, getGoalById } = useStore();
 
   const [viewMode, setViewMode] = useState<ViewMode>('kanban');
   const [filterLevel, setFilterLevel] = useState<FilterLevel>('all');
   const [expandedRiskId, setExpandedRiskId] = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [formData, setFormData] = useState({
+    title: '',
+    description: '',
+    level: 'medium' as RiskLevel,
+    goalId: '',
+    ownerId: '',
+    mitigation: '',
+  });
+  const [formErrors, setFormErrors] = useState<{ title?: string }>({});
 
   const filteredRisks = useMemo(() => {
     if (filterLevel === 'all') return risks;
@@ -77,6 +90,66 @@ export const Risks = () => {
 
   const toggleExpand = (riskId: string) => {
     setExpandedRiskId(expandedRiskId === riskId ? null : riskId);
+  };
+
+  const openModal = () => {
+    setFormData({
+      title: '',
+      description: '',
+      level: 'medium',
+      goalId: '',
+      ownerId: users[0]?.id || '',
+      mitigation: '',
+    });
+    setFormErrors({});
+    setIsModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setIsModalOpen(false);
+  };
+
+  const handleSubmit = () => {
+    const errors: { title?: string } = {};
+    if (!formData.title.trim()) {
+      errors.title = '请输入风险标题';
+    }
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      return;
+    }
+
+    addRisk({
+      title: formData.title.trim(),
+      description: formData.description.trim(),
+      level: formData.level,
+      status: 'open',
+      goalId: formData.goalId || null,
+      ownerId: formData.ownerId,
+      mitigation: formData.mitigation.trim(),
+    });
+
+    closeModal();
+  };
+
+  const handleStatusChange = (riskId: string, newStatus: RiskStatus) => {
+    updateRisk(riskId, { status: newStatus });
+  };
+
+  const getNextStatus = (currentStatus: RiskStatus): RiskStatus => {
+    const flow: RiskStatus[] = ['open', 'mitigating', 'resolved'];
+    const currentIndex = flow.indexOf(currentStatus);
+    return flow[(currentIndex + 1) % flow.length];
+  };
+
+  const getNextStatusText = (status: RiskStatus): string => {
+    const next = getNextStatus(status);
+    const textMap: Record<RiskStatus, string> = {
+      open: '开始缓解',
+      mitigating: '标记已解决',
+      resolved: '重新打开',
+    };
+    return textMap[next];
   };
 
   const RiskCard = ({ risk }: { risk: (typeof risks)[0] }) => {
@@ -186,6 +259,58 @@ export const Risks = () => {
                   <Calendar className="w-3.5 h-3.5 text-gray-400" />
                   <span>更新于：{formatDate(risk.updatedAt)}</span>
                 </div>
+              </div>
+
+              <div className="pt-3 border-t border-gray-100">
+                <h5 className="text-xs font-semibold text-gray-900 mb-3 flex items-center gap-1.5">
+                  <Flag className="w-3.5 h-3.5 text-gray-400" />
+                  状态更新
+                </h5>
+                <div className="flex items-center gap-2">
+                  {statusColumns.map((col) => {
+                    const Icon = col.icon;
+                    const isActive = risk.status === col.status;
+                    return (
+                      <div key={col.status} className="flex items-center">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleStatusChange(risk.id, col.status);
+                          }}
+                          className={cn(
+                            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200',
+                            isActive
+                              ? cn(getStatusColor(col.status), 'shadow-sm')
+                              : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                          )}
+                        >
+                          <Icon className="w-3.5 h-3.5" />
+                          {col.title}
+                        </button>
+                        {col.status !== 'resolved' && (
+                          <ArrowRight className="w-3 h-3 text-gray-300 mx-1" />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleStatusChange(risk.id, getNextStatus(risk.status));
+                  }}
+                  className={cn(
+                    'mt-3 w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200',
+                    risk.status === 'resolved'
+                      ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      : risk.status === 'mitigating'
+                      ? 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-sm'
+                      : 'bg-amber-500 text-white hover:bg-amber-600 shadow-sm'
+                  )}
+                >
+                  <ArrowRight className="w-4 h-4" />
+                  {getNextStatusText(risk.status)}
+                </button>
               </div>
             </div>
           </div>
@@ -357,24 +482,77 @@ export const Risks = () => {
                   {isExpanded && (
                     <tr className="bg-gray-50">
                       <td colSpan={7} className="px-6 py-4">
-                        <div className="grid grid-cols-2 gap-6">
-                          <div>
-                            <h5 className="text-xs font-semibold text-gray-900 mb-2 flex items-center gap-1.5">
-                              <AlertTriangle className="w-3.5 h-3.5 text-gray-400" />
-                              风险描述
-                            </h5>
-                            <p className="text-sm text-gray-600 leading-relaxed">
-                              {risk.description}
-                            </p>
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-6">
+                            <div>
+                              <h5 className="text-xs font-semibold text-gray-900 mb-2 flex items-center gap-1.5">
+                                <AlertTriangle className="w-3.5 h-3.5 text-gray-400" />
+                                风险描述
+                              </h5>
+                              <p className="text-sm text-gray-600 leading-relaxed">
+                                {risk.description}
+                              </p>
+                            </div>
+                            <div>
+                              <h5 className="text-xs font-semibold text-gray-900 mb-2 flex items-center gap-1.5">
+                                <Shield className="w-3.5 h-3.5 text-gray-400" />
+                                缓解方案
+                              </h5>
+                              <p className="text-sm text-gray-600 leading-relaxed">
+                                {risk.mitigation}
+                              </p>
+                            </div>
                           </div>
-                          <div>
-                            <h5 className="text-xs font-semibold text-gray-900 mb-2 flex items-center gap-1.5">
-                              <Shield className="w-3.5 h-3.5 text-gray-400" />
-                              缓解方案
+                          <div className="pt-4 border-t border-gray-200">
+                            <h5 className="text-xs font-semibold text-gray-900 mb-3 flex items-center gap-1.5">
+                              <Flag className="w-3.5 h-3.5 text-gray-400" />
+                              状态更新
                             </h5>
-                            <p className="text-sm text-gray-600 leading-relaxed">
-                              {risk.mitigation}
-                            </p>
+                            <div className="flex items-center gap-2">
+                              {statusColumns.map((col) => {
+                                const Icon = col.icon;
+                                const isActive = risk.status === col.status;
+                                return (
+                                  <div key={col.status} className="flex items-center">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleStatusChange(risk.id, col.status);
+                                      }}
+                                      className={cn(
+                                        'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200',
+                                        isActive
+                                          ? cn(getStatusColor(col.status), 'shadow-sm')
+                                          : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'
+                                      )}
+                                    >
+                                      <Icon className="w-3.5 h-3.5" />
+                                      {col.title}
+                                    </button>
+                                    {col.status !== 'resolved' && (
+                                      <ArrowRight className="w-3 h-3 text-gray-300 mx-1" />
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleStatusChange(risk.id, getNextStatus(risk.status));
+                              }}
+                              className={cn(
+                                'mt-3 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200',
+                                risk.status === 'resolved'
+                                  ? 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                  : risk.status === 'mitigating'
+                                  ? 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-sm'
+                                  : 'bg-amber-500 text-white hover:bg-amber-600 shadow-sm'
+                              )}
+                            >
+                              <ArrowRight className="w-4 h-4" />
+                              {getNextStatusText(risk.status)}
+                            </button>
                           </div>
                         </div>
                       </td>
@@ -447,10 +625,10 @@ export const Risks = () => {
               <ChevronDown className="w-4 h-4 text-gray-400 -ml-4 pointer-events-none" />
             </div>
 
-            <button className="flex items-center gap-2 px-4 py-2 bg-indigo-500 text-white rounded-xl text-sm font-medium hover:bg-indigo-600 transition-colors shadow-sm">
+            <Button onClick={openModal} className="flex items-center gap-2">
               <Plus className="w-4 h-4" />
               登记风险
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -460,6 +638,81 @@ export const Risks = () => {
 
         {viewMode === 'kanban' ? <KanbanView /> : <ListView />}
       </div>
+
+      <Modal
+        isOpen={isModalOpen}
+        onClose={closeModal}
+        title="登记风险"
+        size="lg"
+        footer={
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" onClick={closeModal}>
+              取消
+            </Button>
+            <Button onClick={handleSubmit}>
+              登记
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-5">
+          <Input
+            label="风险标题"
+            value={formData.title}
+            onChange={(v) => {
+              setFormData({ ...formData, title: v });
+              if (formErrors.title) setFormErrors({ ...formErrors, title: undefined });
+            }}
+            placeholder="请输入风险标题"
+            error={formErrors.title}
+          />
+
+          <Textarea
+            label="风险描述"
+            value={formData.description}
+            onChange={(v) => setFormData({ ...formData, description: v })}
+            placeholder="请描述风险的具体内容"
+            rows={3}
+          />
+
+          <div className="grid grid-cols-2 gap-4">
+            <Select
+              label="风险等级"
+              value={formData.level}
+              onChange={(v) => setFormData({ ...formData, level: v as RiskLevel })}
+              options={[
+                { value: 'low', label: '低' },
+                { value: 'medium', label: '中' },
+                { value: 'high', label: '高' },
+                { value: 'critical', label: '紧急' },
+              ]}
+            />
+
+            <Select
+              label="关联目标"
+              value={formData.goalId}
+              onChange={(v) => setFormData({ ...formData, goalId: v })}
+              options={goals.map((g) => ({ value: g.id, label: g.title }))}
+              placeholder="选择关联目标（可选）"
+            />
+          </div>
+
+          <Select
+            label="负责人"
+            value={formData.ownerId}
+            onChange={(v) => setFormData({ ...formData, ownerId: v })}
+            options={users.map((u) => ({ value: u.id, label: u.name }))}
+          />
+
+          <Textarea
+            label="缓解方案"
+            value={formData.mitigation}
+            onChange={(v) => setFormData({ ...formData, mitigation: v })}
+            placeholder="请描述风险的缓解方案"
+            rows={3}
+          />
+        </div>
+      </Modal>
     </Layout>
   );
 };

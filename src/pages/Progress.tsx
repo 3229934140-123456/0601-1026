@@ -1,27 +1,31 @@
 import { useState, useRef } from 'react';
 import {
   MessageSquare,
-  Paperclip,
   Send,
   Plus,
   ChevronDown,
   ChevronUp,
   X,
+  Upload,
+  File,
 } from 'lucide-react';
 import { Layout } from '../components/Layout/Layout';
 import { ProgressBar } from '../components/ProgressBar';
 import { Avatar } from '../components/Avatar';
 import { useStore } from '../store/useStore';
 import { cn, formatDateTime, formatRelativeTime, formatFileSize } from '../utils/helpers';
-import type { Progress as ProgressItem, Comment, KeyResult, User as UserType } from '../types';
+import type { Progress as ProgressItem, KeyResult, User as UserType, Attachment } from '../types';
 
 export const Progress = () => {
   const {
     progresses,
     keyResults,
+    goals,
     getUserById,
     getCommentsByProgressId,
     addComment,
+    addProgress,
+    updateKeyResult,
     currentUser,
     users,
   } = useStore();
@@ -40,6 +44,10 @@ export const Progress = () => {
 
   const getKeyResultById = (id: string): KeyResult | undefined => {
     return keyResults.find((kr) => kr.id === id);
+  };
+
+  const getGoalById = (id: string) => {
+    return goals.find((g) => g.id === id);
   };
 
   const toggleExpand = (progressId: string) => {
@@ -192,10 +200,11 @@ export const Progress = () => {
                   {progress.attachments.map((att) => (
                     <div
                       key={att.id}
+                      onClick={() => alert(`开始下载：${att.name}`)}
                       className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
                     >
                       <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <Paperclip className="w-5 h-5 text-indigo-600" />
+                        <File className="w-5 h-5 text-indigo-600" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-900 truncate">
@@ -337,19 +346,70 @@ export const Progress = () => {
     const [selectedKR, setSelectedKR] = useState('');
     const [progressPercent, setProgressPercent] = useState(0);
     const [content, setContent] = useState('');
+    const [attachments, setAttachments] = useState<Attachment[]>([]);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const generateId = () => Math.random().toString(36).substr(2, 9);
+
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files) return;
+
+      const newAttachments: Attachment[] = Array.from(files).map((file) => ({
+        id: generateId(),
+        name: file.name,
+        url: '#',
+        size: file.size,
+        type: file.type,
+      }));
+
+      setAttachments((prev) => [...prev, ...newAttachments]);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    };
+
+    const removeAttachment = (id: string) => {
+      setAttachments((prev) => prev.filter((a) => a.id !== id));
+    };
 
     const handleSubmit = () => {
       if (!selectedKR || !content.trim()) return;
+
+      const kr = getKeyResultById(selectedKR);
+      if (!kr) return;
+
+      const currentValue = (progressPercent / 100) * kr.targetValue;
+
+      addProgress({
+        keyResultId: selectedKR,
+        authorId: currentUser.id,
+        progressPercent,
+        content: content.trim(),
+        attachments,
+      });
+
+      updateKeyResult(selectedKR, { currentValue });
+
       setShowSubmitModal(false);
       setSelectedKR('');
       setProgressPercent(0);
       setContent('');
+      setAttachments([]);
     };
+
+    const krOptions = keyResults.map((kr) => {
+      const goal = getGoalById(kr.goalId);
+      return {
+        value: kr.id,
+        label: goal ? `${goal.title} - ${kr.title}` : kr.title,
+      };
+    });
 
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-        <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl">
-          <div className="flex items-center justify-between p-6 border-b border-gray-100">
+        <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col">
+          <div className="flex items-center justify-between p-6 border-b border-gray-100 flex-shrink-0">
             <h3 className="text-lg font-semibold text-gray-900">提交进展</h3>
             <button
               onClick={() => setShowSubmitModal(false)}
@@ -359,7 +419,7 @@ export const Progress = () => {
             </button>
           </div>
 
-          <div className="p-6 space-y-5">
+          <div className="p-6 space-y-5 overflow-y-auto flex-1">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 关联关键结果
@@ -370,9 +430,9 @@ export const Progress = () => {
                 className="w-full px-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
               >
                 <option value="">请选择关键结果</option>
-                {keyResults.map((kr) => (
-                  <option key={kr.id} value={kr.id}>
-                    {kr.title}
+                {krOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
                   </option>
                 ))}
               </select>
@@ -403,7 +463,7 @@ export const Progress = () => {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                进展说明
+                进展说明 <span className="text-rose-500">*</span>
               </label>
               <textarea
                 value={content}
@@ -416,17 +476,56 @@ export const Progress = () => {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                附件
+                佐证文件
               </label>
-              <div className="border-2 border-dashed border-gray-200 rounded-lg p-6 text-center hover:border-indigo-300 hover:bg-indigo-50 transition-all cursor-pointer">
-                <Paperclip className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="border-2 border-dashed border-gray-200 rounded-lg p-6 text-center hover:border-indigo-300 hover:bg-indigo-50 transition-all cursor-pointer"
+              >
+                <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
                 <p className="text-sm text-gray-500">点击或拖拽文件到此处上传</p>
                 <p className="text-xs text-gray-400 mt-1">支持图片、文档等格式</p>
               </div>
+
+              {attachments.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {attachments.map((att) => (
+                    <div
+                      key={att.id}
+                      className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg"
+                    >
+                      <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <File className="w-5 h-5 text-indigo-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {att.name}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {formatFileSize(att.size)}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => removeAttachment(att.id)}
+                        className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-200 transition-colors text-gray-400 hover:text-gray-600"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-100 bg-gray-50 rounded-b-2xl">
+          <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-100 bg-gray-50 rounded-b-2xl flex-shrink-0">
             <button
               onClick={() => setShowSubmitModal(false)}
               className="px-5 py-2.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"

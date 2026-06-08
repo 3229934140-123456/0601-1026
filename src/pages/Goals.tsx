@@ -1,27 +1,59 @@
 import { useState, useMemo } from 'react';
-import { ChevronRight, ChevronDown, ListTree, AlignHorizontalJustifyEnd, X, Target, Calendar, Scale, User, CheckCircle } from 'lucide-react';
+import { ChevronRight, ChevronDown, ListTree, AlignHorizontalJustifyEnd, X, Target, Calendar, Scale, User, CheckCircle, Plus } from 'lucide-react';
 import { Layout } from '../components/Layout/Layout';
 import { ProgressBar } from '../components/ProgressBar';
 import { StatusBadge } from '../components/StatusBadge';
 import { Avatar } from '../components/Avatar';
+import { Modal, Button, Input, Textarea, Select } from '../components/Modal';
 import { useStore } from '../store/useStore';
 import { cn, formatDate } from '../utils/helpers';
-import type { Goal, KeyResult } from '../types';
+import type { Goal, KeyResult, GoalType } from '../types';
 
 const Goals = () => {
   const {
     goals,
+    users,
     selectedGoalId,
     setSelectedGoalId,
     viewMode,
     setViewMode,
+    addGoal,
+    addKeyResult,
     calculateGoalProgress,
     getKeyResultsByGoalId,
     getChildGoals,
     getUserById,
+    getGoalById,
   } = useStore();
 
   const [expandedGoals, setExpandedGoals] = useState<Set<string>>(new Set(['goal-1', 'goal-2']));
+
+  const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
+  const [isKRModalOpen, setIsKRModalOpen] = useState(false);
+  const [goalFormErrors, setGoalFormErrors] = useState<{ title?: string }>({});
+  const [krFormErrors, setKrFormErrors] = useState<{ title?: string }>({});
+
+  const [goalForm, setGoalForm] = useState({
+    type: 'department' as GoalType,
+    title: '',
+    description: '',
+    ownerId: '',
+    period: 'Q2',
+    year: '2026',
+    startDate: '',
+    endDate: '',
+    weight: '100',
+    parentId: '',
+  });
+
+  const [krForm, setKrForm] = useState({
+    title: '',
+    targetValue: '',
+    currentValue: '0',
+    unit: '%',
+    weight: '30',
+    ownerId: '',
+  });
 
   const rootGoals = useMemo(() => {
     return goals.filter((g) => g.parentId === null && !g.archived);
@@ -56,6 +88,110 @@ const Goals = () => {
 
   const handleGoalClick = (goalId: string) => {
     setSelectedGoalId(selectedGoalId === goalId ? null : goalId);
+  };
+
+  const resetGoalForm = () => {
+    setGoalForm({
+      type: 'department',
+      title: '',
+      description: '',
+      ownerId: '',
+      period: 'Q2',
+      year: '2026',
+      startDate: '',
+      endDate: '',
+      weight: '100',
+      parentId: '',
+    });
+    setGoalFormErrors({});
+  };
+
+  const handleOpenGoalModal = () => {
+    resetGoalForm();
+    setIsGoalModalOpen(true);
+  };
+
+  const handleCloseGoalModal = () => {
+    setIsGoalModalOpen(false);
+    resetGoalForm();
+  };
+
+  const handleAddGoal = () => {
+    if (!goalForm.title.trim()) {
+      setGoalFormErrors({ title: '请输入目标标题' });
+      return;
+    }
+
+    const newGoal = {
+      type: goalForm.type,
+      title: goalForm.title.trim(),
+      description: goalForm.description.trim(),
+      ownerId: goalForm.ownerId || users[0]?.id || '',
+      period: goalForm.period,
+      year: parseInt(goalForm.year),
+      weight: parseInt(goalForm.weight) || 100,
+      status: 'active' as const,
+      parentId: goalForm.parentId || null,
+      startDate: goalForm.startDate || new Date().toISOString().split('T')[0],
+      endDate: goalForm.endDate || new Date().toISOString().split('T')[0],
+      archived: false,
+    };
+
+    addGoal(newGoal);
+    
+    const state = useStore.getState();
+    const createdGoal = state.goals[state.goals.length - 1];
+    if (createdGoal) {
+      setSelectedGoalId(createdGoal.id);
+      if (goalForm.parentId) {
+        setExpandedGoals((prev) => new Set([...prev, goalForm.parentId]));
+      }
+    }
+
+    handleCloseGoalModal();
+  };
+
+  const resetKrForm = () => {
+    setKrForm({
+      title: '',
+      targetValue: '',
+      currentValue: '0',
+      unit: '%',
+      weight: '30',
+      ownerId: '',
+    });
+    setKrFormErrors({});
+  };
+
+  const handleOpenKRModal = () => {
+    resetKrForm();
+    setIsKRModalOpen(true);
+  };
+
+  const handleCloseKRModal = () => {
+    setIsKRModalOpen(false);
+    resetKrForm();
+  };
+
+  const handleAddKeyResult = () => {
+    if (!krForm.title.trim()) {
+      setKrFormErrors({ title: '请输入关键结果标题' });
+      return;
+    }
+
+    const newKR = {
+      goalId: selectedGoalId || '',
+      title: krForm.title.trim(),
+      targetValue: parseFloat(krForm.targetValue) || 0,
+      currentValue: parseFloat(krForm.currentValue) || 0,
+      unit: krForm.unit,
+      weight: parseInt(krForm.weight) || 30,
+      ownerId: krForm.ownerId || selectedGoalOwner?.id || users[0]?.id || '',
+      status: 'on_track' as const,
+    };
+
+    addKeyResult(newKR);
+    handleCloseKRModal();
   };
 
   const GoalNode = ({ goal, level = 0 }: { goal: Goal; level?: number }) => {
@@ -375,10 +511,16 @@ const Goals = () => {
           </div>
 
           <div className="space-y-3">
-            <h4 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-              <CheckCircle size={16} className="text-gray-400" />
-              关键结果 ({selectedGoalKeyResults.length})
-            </h4>
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                <CheckCircle size={16} className="text-gray-400" />
+                关键结果 ({selectedGoalKeyResults.length})
+              </h4>
+              <Button size="sm" variant="ghost" onClick={handleOpenKRModal}>
+                <Plus size={14} className="mr-1" />
+                添加
+              </Button>
+            </div>
             <div className="space-y-2">
               {selectedGoalKeyResults.map((kr: KeyResult) => {
                 const krProgress = Math.min(
@@ -466,15 +608,21 @@ const Goals = () => {
             </button>
           </div>
 
-          <div className="flex items-center gap-3 text-sm text-gray-500">
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-indigo-500" />
-              <span>部门目标</span>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 text-sm text-gray-500">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-indigo-500" />
+                <span>部门目标</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span>个人目标</span>
+              </div>
             </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span>个人目标</span>
-            </div>
+            <Button onClick={handleOpenGoalModal}>
+              <Plus size={16} className="mr-1.5" />
+              新建目标
+            </Button>
           </div>
         </div>
 
@@ -492,6 +640,194 @@ const Goals = () => {
       </div>
 
       <DetailSidebar />
+
+      <Modal
+        isOpen={isGoalModalOpen}
+        onClose={handleCloseGoalModal}
+        title="新建目标"
+        size="lg"
+        footer={
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" onClick={handleCloseGoalModal}>
+              取消
+            </Button>
+            <Button onClick={handleAddGoal}>
+              创建目标
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Select
+              label="目标类型"
+              value={goalForm.type}
+              onChange={(value) => setGoalForm({ ...goalForm, type: value as GoalType })}
+              options={[
+                { value: 'department', label: '部门目标' },
+                { value: 'personal', label: '个人目标' },
+              ]}
+            />
+            <Select
+              label="周期"
+              value={goalForm.period}
+              onChange={(value) => setGoalForm({ ...goalForm, period: value })}
+              options={[
+                { value: 'Q1', label: 'Q1' },
+                { value: 'Q2', label: 'Q2' },
+                { value: 'Q3', label: 'Q3' },
+                { value: 'Q4', label: 'Q4' },
+              ]}
+            />
+          </div>
+
+          <Input
+            label="目标标题"
+            value={goalForm.title}
+            onChange={(value) => {
+              setGoalForm({ ...goalForm, title: value });
+              if (goalFormErrors.title) {
+                setGoalFormErrors({ ...goalFormErrors, title: undefined });
+              }
+            }}
+            placeholder="请输入目标标题"
+            error={goalFormErrors.title}
+          />
+
+          <Textarea
+            label="目标描述"
+            value={goalForm.description}
+            onChange={(value) => setGoalForm({ ...goalForm, description: value })}
+            placeholder="请输入目标描述"
+            rows={3}
+          />
+
+          <div className="grid grid-cols-2 gap-4">
+            <Select
+              label="负责人"
+              value={goalForm.ownerId}
+              onChange={(value) => setGoalForm({ ...goalForm, ownerId: value })}
+              options={users.map((u) => ({ value: u.id, label: u.name }))}
+              placeholder="请选择负责人"
+            />
+            <Select
+              label="年份"
+              value={goalForm.year}
+              onChange={(value) => setGoalForm({ ...goalForm, year: value })}
+              options={[
+                { value: '2025', label: '2025' },
+                { value: '2026', label: '2026' },
+                { value: '2027', label: '2027' },
+              ]}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label="开始日期"
+              type="date"
+              value={goalForm.startDate}
+              onChange={(value) => setGoalForm({ ...goalForm, startDate: value })}
+            />
+            <Input
+              label="结束日期"
+              type="date"
+              value={goalForm.endDate}
+              onChange={(value) => setGoalForm({ ...goalForm, endDate: value })}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label="权重 (%)"
+              type="number"
+              value={goalForm.weight}
+              onChange={(value) => setGoalForm({ ...goalForm, weight: value })}
+              placeholder="100"
+            />
+            <Select
+              label="父级目标"
+              value={goalForm.parentId}
+              onChange={(value) => setGoalForm({ ...goalForm, parentId: value })}
+              options={goals.filter((g) => !g.archived).map((g) => ({ value: g.id, label: g.title }))}
+              placeholder="无（顶级目标）"
+            />
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isKRModalOpen}
+        onClose={handleCloseKRModal}
+        title="添加关键结果"
+        size="md"
+        footer={
+          <div className="flex justify-end gap-3">
+            <Button variant="secondary" onClick={handleCloseKRModal}>
+              取消
+            </Button>
+            <Button onClick={handleAddKeyResult}>
+              添加
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <Input
+            label="关键结果标题"
+            value={krForm.title}
+            onChange={(value) => {
+              setKrForm({ ...krForm, title: value });
+              if (krFormErrors.title) {
+                setKrFormErrors({ ...krFormErrors, title: undefined });
+              }
+            }}
+            placeholder="请输入关键结果标题"
+            error={krFormErrors.title}
+          />
+
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label="目标值"
+              type="number"
+              value={krForm.targetValue}
+              onChange={(value) => setKrForm({ ...krForm, targetValue: value })}
+              placeholder="请输入目标值"
+            />
+            <Input
+              label="当前值"
+              type="number"
+              value={krForm.currentValue}
+              onChange={(value) => setKrForm({ ...krForm, currentValue: value })}
+              placeholder="0"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label="单位"
+              value={krForm.unit}
+              onChange={(value) => setKrForm({ ...krForm, unit: value })}
+              placeholder="%"
+            />
+            <Input
+              label="权重 (%)"
+              type="number"
+              value={krForm.weight}
+              onChange={(value) => setKrForm({ ...krForm, weight: value })}
+              placeholder="30"
+            />
+          </div>
+
+          <Select
+            label="负责人"
+            value={krForm.ownerId}
+            onChange={(value) => setKrForm({ ...krForm, ownerId: value })}
+            options={users.map((u) => ({ value: u.id, label: u.name }))}
+            placeholder="请选择负责人"
+          />
+        </div>
+      </Modal>
     </Layout>
   );
 };

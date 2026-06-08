@@ -9,6 +9,7 @@ import {
   Risk,
   Meeting,
   Activity,
+  ActionItem,
 } from '../types';
 import {
   users,
@@ -61,7 +62,9 @@ interface AppState {
   addRisk: (risk: Omit<Risk, 'id' | 'createdAt' | 'updatedAt'>) => void;
   updateRisk: (id: string, updates: Partial<Risk>) => void;
   
-  addMeeting: (meeting: Omit<Meeting, 'id' | 'createdAt'>) => void;
+  addMeeting: (meeting: Omit<Meeting, 'id' | 'createdAt'>) => Meeting;
+  updateMeeting: (id: string, updates: Partial<Meeting>) => void;
+  updateActionItem: (meetingId: string, actionItemId: string, updates: Partial<ActionItem>) => void;
   
   getUserById: (id: string) => User | undefined;
   getGoalById: (id: string) => Goal | undefined;
@@ -165,9 +168,33 @@ export const useStore = create<AppState>((set, get) => ({
       ),
     })),
 
-  addMeeting: (meeting) =>
+  addMeeting: (meeting) => {
+    const newMeeting = { ...meeting, id: generateId(), createdAt: new Date().toISOString() };
     set((state) => ({
-      meetings: [...state.meetings, { ...meeting, id: generateId(), createdAt: new Date().toISOString() }],
+      meetings: [newMeeting, ...state.meetings],
+    }));
+    return newMeeting;
+  },
+
+  updateMeeting: (id, updates) =>
+    set((state) => ({
+      meetings: state.meetings.map((m) =>
+        m.id === id ? { ...m, ...updates } : m
+      ),
+    })),
+
+  updateActionItem: (meetingId, actionItemId, updates) =>
+    set((state) => ({
+      meetings: state.meetings.map((m) =>
+        m.id === meetingId
+          ? {
+              ...m,
+              actionItems: m.actionItems.map((item) =>
+                item.id === actionItemId ? { ...item, ...updates } : item
+              ),
+            }
+          : m
+      ),
     })),
 
   getUserById: (id) => get().users.find((u) => u.id === id),

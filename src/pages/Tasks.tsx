@@ -1,4 +1,4 @@
-import { useState, useMemo, DragEvent } from 'react';
+import React, { useState, useMemo, DragEvent } from 'react';
 import {
   LayoutGrid,
   List,
@@ -8,10 +8,14 @@ import {
   ArrowUpDown,
   Filter,
   Target,
+  Plus,
+  ChevronRight,
+  User,
 } from 'lucide-react';
 import { Layout } from '../components/Layout/Layout';
 import { StatusBadge } from '../components/StatusBadge';
 import { Avatar } from '../components/Avatar';
+import { Modal, Button, Input, Textarea, Select } from '../components/Modal';
 import { useStore } from '../store/useStore';
 import { cn, formatShortDate, getPriorityColor, getPriorityText } from '../utils/helpers';
 import { TaskStatus, TaskPriority } from '../types';
@@ -29,10 +33,13 @@ export const Tasks = () => {
   const {
     tasks,
     keyResults,
+    users,
     taskViewMode,
     setTaskViewMode,
+    addTask,
     updateTaskStatus,
     getUserById,
+    getGoalById,
   } = useStore();
 
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
@@ -43,8 +50,104 @@ export const Tasks = () => {
   const [sortField, setSortField] = useState<SortField>('createdAt');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [formData, setFormData] = useState({
+    title: '',
+    description: '',
+    keyResultId: '',
+    assigneeId: '',
+    priority: 'medium' as TaskPriority,
+    dueDate: '',
+  });
+  const [formErrors, setFormErrors] = useState<{ title?: string }>({});
+
   const getKeyResultById = (krId: string) => {
     return keyResults.find((kr) => kr.id === krId);
+  };
+
+  const keyResultOptions = useMemo(() => {
+    return keyResults.map((kr) => {
+      const goal = getGoalById(kr.goalId);
+      return {
+        value: kr.id,
+        label: goal ? `${goal.title} - ${kr.title}` : kr.title,
+      };
+    });
+  }, [keyResults, getGoalById]);
+
+  const userOptions = useMemo(() => {
+    return users.map((user) => ({
+      value: user.id,
+      label: user.name,
+    }));
+  }, [users]);
+
+  const priorityOptions = [
+    { value: 'low', label: '低' },
+    { value: 'medium', label: '中' },
+    { value: 'high', label: '高' },
+    { value: 'urgent', label: '紧急' },
+  ];
+
+  const handleOpenModal = () => {
+    setFormData({
+      title: '',
+      description: '',
+      keyResultId: '',
+      assigneeId: '',
+      priority: 'medium',
+      dueDate: '',
+    });
+    setFormErrors({});
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setFormData({
+      title: '',
+      description: '',
+      keyResultId: '',
+      assigneeId: '',
+      priority: 'medium',
+      dueDate: '',
+    });
+    setFormErrors({});
+  };
+
+  const handleSubmit = () => {
+    if (!formData.title.trim()) {
+      setFormErrors({ title: '任务标题不能为空' });
+      return;
+    }
+
+    addTask({
+      title: formData.title.trim(),
+      description: formData.description,
+      keyResultId: formData.keyResultId || keyResults[0]?.id || '',
+      assigneeId: formData.assigneeId || users[0]?.id || '',
+      priority: formData.priority,
+      status: 'todo',
+      dueDate: formData.dueDate || new Date().toISOString().split('T')[0],
+    });
+
+    handleCloseModal();
+  };
+
+  const handleStatusClick = (taskId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+
+    const statusOrder: TaskStatus[] = ['todo', 'in_progress', 'done'];
+    const currentIndex = statusOrder.indexOf(task.status);
+    const nextStatus = statusOrder[(currentIndex + 1) % statusOrder.length];
+    updateTaskStatus(taskId, nextStatus);
+  };
+
+  const toggleTaskExpand = (taskId: string) => {
+    setExpandedTaskId(expandedTaskId === taskId ? null : taskId);
   };
 
   const filteredTasks = useMemo(() => {
@@ -351,58 +454,125 @@ export const Tasks = () => {
             {filteredTasks.map((task) => {
               const assignee = getUserById(task.assigneeId);
               const keyResult = getKeyResultById(task.keyResultId);
+              const goal = keyResult ? getGoalById(keyResult.goalId) : null;
               const isOverdue = new Date(task.dueDate) < new Date() && task.status !== 'done';
+              const isExpanded = expandedTaskId === task.id;
 
               return (
-                <tr
-                  key={task.id}
-                  className="hover:bg-gray-50 transition-colors cursor-pointer"
-                >
-                  <td className="px-6 py-4">
-                    <p className="text-sm font-medium text-gray-900">{task.title}</p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <Target className="w-4 h-4 text-indigo-400 shrink-0" />
-                      <span className="text-sm text-gray-600 truncate max-w-48">
-                        {keyResult?.title || '-'}
+                <React.Fragment key={task.id}>
+                  <tr
+                    className={cn(
+                      'hover:bg-gray-50 transition-colors cursor-pointer',
+                      isExpanded && 'bg-gray-50'
+                    )}
+                    onClick={() => toggleTaskExpand(task.id)}
+                  >
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <ChevronRight
+                          className={cn(
+                            'w-4 h-4 text-gray-400 transition-transform shrink-0',
+                            isExpanded && 'rotate-90'
+                          )}
+                        />
+                        <p className="text-sm font-medium text-gray-900">{task.title}</p>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <Target className="w-4 h-4 text-indigo-400 shrink-0" />
+                        <span className="text-sm text-gray-600 truncate max-w-48">
+                          {keyResult?.title || '-'}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span
+                        className={cn(
+                          'inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-md',
+                          getPriorityColor(task.priority)
+                        )}
+                      >
+                        <Flag className="w-3 h-3 mr-1" />
+                        {getPriorityText(task.priority)}
                       </span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span
-                      className={cn(
-                        'inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-md',
-                        getPriorityColor(task.priority)
-                      )}
-                    >
-                      <Flag className="w-3 h-3 mr-1" />
-                      {getPriorityText(task.priority)}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <StatusBadge status={task.status} size="sm" />
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <Avatar name={assignee?.name || '未知'} size="sm" />
-                      <span className="text-sm text-gray-700">
-                        {assignee?.name || '未知'}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div
-                      className={cn(
-                        'flex items-center gap-1.5 text-sm',
-                        isOverdue ? 'text-rose-500 font-medium' : 'text-gray-600'
-                      )}
-                    >
-                      <Calendar className="w-4 h-4" />
-                      <span>{formatShortDate(task.dueDate)}</span>
-                    </div>
-                  </td>
-                </tr>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div
+                        onClick={(e) => handleStatusClick(task.id, e)}
+                        className="inline-block cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-indigo-300 rounded-md transition-all"
+                        title="点击切换状态"
+                      >
+                        <StatusBadge status={task.status} size="sm" />
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <Avatar name={assignee?.name || '未知'} size="sm" />
+                        <span className="text-sm text-gray-700">
+                          {assignee?.name || '未知'}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div
+                        className={cn(
+                          'flex items-center gap-1.5 text-sm',
+                          isOverdue ? 'text-rose-500 font-medium' : 'text-gray-600'
+                        )}
+                      >
+                        <Calendar className="w-4 h-4" />
+                        <span>{formatShortDate(task.dueDate)}</span>
+                      </div>
+                    </td>
+                  </tr>
+                  {isExpanded && (
+                    <tr className="bg-gray-50">
+                      <td colSpan={6} className="px-6 py-4">
+                        <div className="pl-6 space-y-3">
+                          {task.description && (
+                            <div>
+                              <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+                                任务描述
+                              </h5>
+                              <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                                {task.description}
+                              </p>
+                            </div>
+                          )}
+                          {goal && (
+                            <div>
+                              <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+                                所属目标
+                              </h5>
+                              <p className="text-sm text-gray-700">{goal.title}</p>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-6 pt-2">
+                            <div className="flex items-center gap-2">
+                              <User className="w-4 h-4 text-gray-400" />
+                              <span className="text-sm text-gray-600">
+                                负责人：{assignee?.name || '未知'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Flag className="w-4 h-4 text-gray-400" />
+                              <span className="text-sm text-gray-600">
+                                优先级：{getPriorityText(task.priority)}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Calendar className="w-4 h-4 text-gray-400" />
+                              <span className="text-sm text-gray-600">
+                                创建时间：{formatShortDate(task.createdAt)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               );
             })}
           </tbody>
@@ -419,6 +589,78 @@ export const Tasks = () => {
         </div>
       )}
     </div>
+  );
+
+  const NewTaskModal = () => (
+    <Modal
+      isOpen={isModalOpen}
+      onClose={handleCloseModal}
+      title="新建任务"
+      size="md"
+      footer={
+        <div className="flex justify-end gap-3">
+          <Button variant="secondary" onClick={handleCloseModal}>
+            取消
+          </Button>
+          <Button variant="primary" onClick={handleSubmit}>
+            创建任务
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-4">
+        <Input
+          label="任务标题"
+          value={formData.title}
+          onChange={(v) => {
+            setFormData({ ...formData, title: v });
+            if (formErrors.title) setFormErrors({});
+          }}
+          placeholder="请输入任务标题"
+          error={formErrors.title}
+        />
+
+        <Textarea
+          label="任务描述"
+          value={formData.description}
+          onChange={(v) => setFormData({ ...formData, description: v })}
+          placeholder="请输入任务描述（可选）"
+          rows={3}
+        />
+
+        <Select
+          label="关联关键结果"
+          value={formData.keyResultId}
+          onChange={(v) => setFormData({ ...formData, keyResultId: v })}
+          options={keyResultOptions}
+          placeholder="请选择关联的关键结果"
+        />
+
+        <div className="grid grid-cols-2 gap-4">
+          <Select
+            label="负责人"
+            value={formData.assigneeId}
+            onChange={(v) => setFormData({ ...formData, assigneeId: v })}
+            options={userOptions}
+            placeholder="请选择负责人"
+          />
+
+          <Select
+            label="优先级"
+            value={formData.priority}
+            onChange={(v) => setFormData({ ...formData, priority: v as TaskPriority })}
+            options={priorityOptions}
+          />
+        </div>
+
+        <Input
+          label="截止日期"
+          type="date"
+          value={formData.dueDate}
+          onChange={(v) => setFormData({ ...formData, dueDate: v })}
+        />
+      </div>
+    </Modal>
   );
 
   return (
@@ -451,9 +693,15 @@ export const Tasks = () => {
               列表视图
             </button>
           </div>
+
+          <Button onClick={handleOpenModal}>
+            <Plus className="w-4 h-4 mr-1.5" />
+            新建任务
+          </Button>
         </div>
 
         {taskViewMode === 'kanban' ? <KanbanView /> : <ListView />}
+        <NewTaskModal />
       </div>
     </Layout>
   );

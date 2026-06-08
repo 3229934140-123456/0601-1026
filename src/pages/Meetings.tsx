@@ -8,12 +8,17 @@ import {
   Clock,
   ChevronRight,
   Check,
+  Trash2,
+  PlusCircle,
 } from 'lucide-react';
 import { Layout } from '../components/Layout/Layout';
 import { Avatar } from '../components/Avatar';
 import { useStore } from '../store/useStore';
 import { cn, formatDate, formatDateTime, formatShortDate } from '../utils/helpers';
+import { Modal, Button, Input, Textarea, Select } from '../components/Modal';
 import type { Meeting, ActionItem } from '../types';
+
+const generateId = () => Math.random().toString(36).substr(2, 9);
 
 const renderMarkdown = (text: string): string => {
   let html = text;
@@ -30,10 +35,30 @@ const renderMarkdown = (text: string): string => {
   return `<p class="text-gray-700 leading-relaxed mb-3">${html}</p>`;
 };
 
+interface NewActionItemForm {
+  id: string;
+  content: string;
+  assigneeId: string;
+  dueDate: string;
+}
+
 export const Meetings = () => {
-  const { meetings, getUserById } = useStore();
+  const { meetings, users, getUserById, addMeeting, updateMeeting, updateActionItem } = useStore();
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
-  const [localActionItems, setLocalActionItems] = useState<Record<string, boolean>>({});
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isAddActionItemOpen, setIsAddActionItemOpen] = useState(false);
+
+  const [formTitle, setFormTitle] = useState('');
+  const [formDate, setFormDate] = useState('');
+  const [formTime, setFormTime] = useState('');
+  const [formAttendees, setFormAttendees] = useState<string[]>([]);
+  const [formNotes, setFormNotes] = useState('');
+  const [formActionItems, setFormActionItems] = useState<NewActionItemForm[]>([]);
+  const [formErrors, setFormErrors] = useState<{ title?: string }>({});
+
+  const [newActionItemContent, setNewActionItemContent] = useState('');
+  const [newActionItemAssignee, setNewActionItemAssignee] = useState('');
+  const [newActionItemDueDate, setNewActionItemDueDate] = useState('');
 
   const sortedMeetings = useMemo(() => {
     return [...meetings].sort(
@@ -50,27 +75,125 @@ export const Meetings = () => {
     setSelectedMeetingId(meetingId === selectedMeetingId ? null : meetingId);
   };
 
-  const toggleActionItem = (actionItemId: string, currentCompleted: boolean) => {
-    setLocalActionItems((prev) => ({
-      ...prev,
-      [actionItemId]: prev[actionItemId] !== undefined ? !prev[actionItemId] : !currentCompleted,
-    }));
+  const toggleActionItem = (meetingId: string, actionItemId: string, completed: boolean) => {
+    updateActionItem(meetingId, actionItemId, { completed: !completed });
   };
 
-  const isActionItemCompleted = (item: ActionItem) => {
-    if (localActionItems[item.id] !== undefined) {
-      return localActionItems[item.id];
+  const handleDeleteActionItem = (meetingId: string, actionItemId: string) => {
+    const meeting = meetings.find((m) => m.id === meetingId);
+    if (meeting) {
+      const newActionItems = meeting.actionItems.filter((item) => item.id !== actionItemId);
+      updateMeeting(meetingId, { actionItems: newActionItems });
     }
-    return item.completed;
+  };
+
+  const openCreateModal = () => {
+    setFormTitle('');
+    setFormDate('');
+    setFormTime('');
+    setFormAttendees([]);
+    setFormNotes('');
+    setFormActionItems([]);
+    setFormErrors({});
+    setIsCreateModalOpen(true);
+  };
+
+  const toggleAttendee = (userId: string) => {
+    setFormAttendees((prev) =>
+      prev.includes(userId)
+        ? prev.filter((id) => id !== userId)
+        : [...prev, userId]
+    );
+  };
+
+  const addFormActionItem = () => {
+    setFormActionItems((prev) => [
+      ...prev,
+      { id: generateId(), content: '', assigneeId: '', dueDate: '' },
+    ]);
+  };
+
+  const removeFormActionItem = (id: string) => {
+    setFormActionItems((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const updateFormActionItem = (id: string, field: keyof NewActionItemForm, value: string) => {
+    setFormActionItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, [field]: value } : item))
+    );
+  };
+
+  const handleCreateMeeting = () => {
+    const errors: { title?: string } = {};
+    if (!formTitle.trim()) {
+      errors.title = '请输入会议标题';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      return;
+    }
+
+    const dateTime = formDate && formTime ? `${formDate}T${formTime}:00` : formDate || new Date().toISOString();
+
+    const actionItems: ActionItem[] = formActionItems
+      .filter((item) => item.content.trim())
+      .map((item) => ({
+        id: generateId(),
+        meetingId: '',
+        content: item.content,
+        assigneeId: item.assigneeId,
+        dueDate: item.dueDate || new Date().toISOString().split('T')[0],
+        completed: false,
+      }));
+
+    const newMeeting = {
+      title: formTitle,
+      date: dateTime,
+      attendees: formAttendees,
+      notes: formNotes,
+      actionItems: actionItems,
+    };
+
+    const createdMeeting = addMeeting(newMeeting);
+    setIsCreateModalOpen(false);
+    setSelectedMeetingId(createdMeeting.id);
+  };
+
+  const openAddActionItem = () => {
+    setNewActionItemContent('');
+    setNewActionItemAssignee('');
+    setNewActionItemDueDate('');
+    setIsAddActionItemOpen(true);
+  };
+
+  const handleAddActionItem = () => {
+    if (!newActionItemContent.trim() || !selectedMeetingId) return;
+
+    const newItem: ActionItem = {
+      id: generateId(),
+      meetingId: selectedMeetingId,
+      content: newActionItemContent,
+      assigneeId: newActionItemAssignee || users[0]?.id || '',
+      dueDate: newActionItemDueDate || new Date().toISOString().split('T')[0],
+      completed: false,
+    };
+
+    const meeting = meetings.find((m) => m.id === selectedMeetingId);
+    if (meeting) {
+      updateMeeting(selectedMeetingId, {
+        actionItems: [...meeting.actionItems, newItem],
+      });
+    }
+
+    setIsAddActionItemOpen(false);
   };
 
   const MeetingCard = ({ meeting }: { meeting: Meeting }) => {
     const isSelected = selectedMeetingId === meeting.id;
     const attendeeCount = meeting.attendees.length;
     const actionItemCount = meeting.actionItems.length;
-    const completedCount = meeting.actionItems.filter((item) =>
-      isActionItemCompleted(item)
-    ).length;
+    const completedCount = meeting.actionItems.filter((item) => item.completed).length;
 
     return (
       <div
@@ -136,35 +259,34 @@ export const Meetings = () => {
     );
   };
 
-  const ActionItemRow = ({ item }: { item: ActionItem }) => {
+  const ActionItemRow = ({ item, meetingId }: { item: ActionItem; meetingId: string }) => {
     const assignee = getUserById(item.assigneeId);
-    const completed = isActionItemCompleted(item);
-    const isOverdue = new Date(item.dueDate) < new Date() && !completed;
+    const isOverdue = new Date(item.dueDate) < new Date() && !item.completed;
 
     return (
       <div
         className={cn(
-          'flex items-start gap-3 p-3 rounded-lg transition-colors duration-200',
+          'flex items-start gap-3 p-3 rounded-lg transition-colors duration-200 group',
           'hover:bg-gray-50'
         )}
       >
         <button
-          onClick={() => toggleActionItem(item.id, item.completed)}
+          onClick={() => toggleActionItem(meetingId, item.id, item.completed)}
           className={cn(
             'mt-0.5 w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all duration-200',
-            completed
+            item.completed
               ? 'bg-indigo-500 border-indigo-500 text-white'
               : 'border-gray-300 hover:border-indigo-400'
           )}
         >
-          {completed && <Check className="w-3 h-3" />}
+          {item.completed && <Check className="w-3 h-3" />}
         </button>
 
         <div className="flex-1 min-w-0">
           <p
             className={cn(
               'text-sm leading-relaxed',
-              completed ? 'text-gray-400 line-through' : 'text-gray-700'
+              item.completed ? 'text-gray-400 line-through' : 'text-gray-700'
             )}
           >
             {item.content}
@@ -187,6 +309,13 @@ export const Meetings = () => {
             </div>
           </div>
         </div>
+
+        <button
+          onClick={() => handleDeleteActionItem(meetingId, item.id)}
+          className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
       </div>
     );
   };
@@ -195,9 +324,7 @@ export const Meetings = () => {
     const attendees = meeting.attendees
       .map((id) => getUserById(id))
       .filter(Boolean);
-    const completedCount = meeting.actionItems.filter((item) =>
-      isActionItemCompleted(item)
-    ).length;
+    const completedCount = meeting.actionItems.filter((item) => item.completed).length;
     const totalCount = meeting.actionItems.length;
     const progressPercent = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
 
@@ -260,16 +387,25 @@ export const Meetings = () => {
                 <CheckSquare className="w-4 h-4 text-indigo-500" />
                 行动项 ({completedCount}/{totalCount})
               </h3>
-              <div className="w-24 h-2 bg-gray-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-indigo-500 rounded-full transition-all duration-300"
-                  style={{ width: `${progressPercent}%` }}
-                />
+              <div className="flex items-center gap-3">
+                <div className="w-24 h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-indigo-500 rounded-full transition-all duration-300"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+                <button
+                  onClick={openAddActionItem}
+                  className="flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-600 font-medium"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  添加
+                </button>
               </div>
             </div>
             <div className="space-y-1">
               {meeting.actionItems.map((item) => (
-                <ActionItemRow key={item.id} item={item} />
+                <ActionItemRow key={item.id} item={item} meetingId={meeting.id} />
               ))}
               {meeting.actionItems.length === 0 && (
                 <div className="text-center py-8 text-gray-400 text-sm">
@@ -300,7 +436,10 @@ export const Meetings = () => {
           共 <span className="font-medium text-gray-900">{meetings.length}</span>{' '}
           场会议
         </div>
-        <button className="flex items-center gap-2 px-4 py-2.5 bg-indigo-500 text-white text-sm font-medium rounded-xl hover:bg-indigo-600 transition-colors duration-200 shadow-sm">
+        <button
+          onClick={openCreateModal}
+          className="flex items-center gap-2 px-4 py-2.5 bg-indigo-500 text-white text-sm font-medium rounded-xl hover:bg-indigo-600 transition-colors duration-200 shadow-sm"
+        >
           <Plus className="w-4 h-4" />
           创建会议
         </button>
@@ -332,6 +471,185 @@ export const Meetings = () => {
           )}
         </div>
       </div>
+
+      <Modal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        title="创建会议"
+        size="lg"
+        footer={
+          <div className="flex justify-end gap-3">
+            <Button
+              variant="secondary"
+              onClick={() => setIsCreateModalOpen(false)}
+            >
+              取消
+            </Button>
+            <Button onClick={handleCreateMeeting}>创建会议</Button>
+          </div>
+        }
+      >
+        <div className="space-y-5">
+          <Input
+            label="会议标题"
+            value={formTitle}
+            onChange={setFormTitle}
+            placeholder="请输入会议标题"
+            error={formErrors.title}
+          />
+
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label="会议日期"
+              type="date"
+              value={formDate}
+              onChange={setFormDate}
+            />
+            <Input
+              label="会议时间"
+              type="time"
+              value={formTime}
+              onChange={setFormTime}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              参会人员
+            </label>
+            <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-3">
+              {users.map((user) => (
+                <label
+                  key={user.id}
+                  className="flex items-center gap-2 p-2 rounded-lg hover:bg-gray-50 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={formAttendees.includes(user.id)}
+                    onChange={() => toggleAttendee(user.id)}
+                    className="w-4 h-4 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500"
+                  />
+                  <Avatar name={user.name} size="sm" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">
+                      {user.name}
+                    </p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {user.department}
+                    </p>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <Textarea
+            label="会议纪要"
+            value={formNotes}
+            onChange={setFormNotes}
+            placeholder="支持 Markdown 格式，例如：# 标题、**加粗**、- 列表项"
+            rows={4}
+          />
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-gray-700">
+                行动项
+              </label>
+              <button
+                onClick={addFormActionItem}
+                className="flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-600 font-medium"
+              >
+                <PlusCircle className="w-3.5 h-3.5" />
+                添加行动项
+              </button>
+            </div>
+            <div className="space-y-3">
+              {formActionItems.map((item, index) => (
+                <div
+                  key={item.id}
+                  className="flex gap-3 items-start p-3 bg-gray-50 rounded-lg"
+                >
+                  <div className="flex-1 space-y-2">
+                    <Input
+                      placeholder="行动项内容"
+                      value={item.content}
+                      onChange={(value) => updateFormActionItem(item.id, 'content', value)}
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <Select
+                        value={item.assigneeId}
+                        onChange={(value) => updateFormActionItem(item.id, 'assigneeId', value)}
+                        options={users.map((u) => ({ value: u.id, label: u.name }))}
+                        placeholder="选择负责人"
+                      />
+                      <Input
+                        type="date"
+                        value={item.dueDate}
+                        onChange={(value) => updateFormActionItem(item.id, 'dueDate', value)}
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => removeFormActionItem(item.id)}
+                    className="p-1.5 text-gray-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+              {formActionItems.length === 0 && (
+                <div className="text-center py-6 text-gray-400 text-sm border border-dashed border-gray-200 rounded-lg">
+                  点击上方按钮添加行动项
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isAddActionItemOpen}
+        onClose={() => setIsAddActionItemOpen(false)}
+        title="添加行动项"
+        size="md"
+        footer={
+          <div className="flex justify-end gap-3">
+            <Button
+              variant="secondary"
+              onClick={() => setIsAddActionItemOpen(false)}
+            >
+              取消
+            </Button>
+            <Button onClick={handleAddActionItem}>添加</Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <Textarea
+            label="行动项内容"
+            value={newActionItemContent}
+            onChange={setNewActionItemContent}
+            placeholder="请输入行动项内容"
+            rows={2}
+          />
+          <div className="grid grid-cols-2 gap-4">
+            <Select
+              label="负责人"
+              value={newActionItemAssignee}
+              onChange={setNewActionItemAssignee}
+              options={users.map((u) => ({ value: u.id, label: u.name }))}
+              placeholder="选择负责人"
+            />
+            <Input
+              label="截止日期"
+              type="date"
+              value={newActionItemDueDate}
+              onChange={setNewActionItemDueDate}
+            />
+          </div>
+        </div>
+      </Modal>
     </Layout>
   );
 };

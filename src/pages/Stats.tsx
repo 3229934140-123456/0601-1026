@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   BarChart3,
   TrendingUp,
@@ -5,10 +6,14 @@ import {
   Download,
   Archive,
   Target,
+  CheckCircle,
   AlertTriangle,
   Calendar,
   Trophy,
   ChevronRight,
+  X,
+  Check,
+  FileDown,
   Users,
 } from 'lucide-react';
 import {
@@ -29,8 +34,9 @@ import {
 import { Layout } from '../components/Layout/Layout';
 import { ProgressBar } from '../components/ProgressBar';
 import { Avatar } from '../components/Avatar';
+import { Modal, Button } from '../components/Modal';
 import { useStore } from '../store/useStore';
-import { cn } from '../utils/helpers';
+import { cn, formatDate } from '../utils/helpers';
 
 const weeklyTrendData = [
   { week: 'W14', progress: 15, target: 25 },
@@ -54,9 +60,39 @@ const categoryData = [
   { name: '团队建设', value: 10, color: '#A78BFA' },
 ];
 
+const getWeekRange = () => {
+  const now = new Date();
+  const dayOfWeek = now.getDay();
+  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + diffToMonday);
+  monday.setHours(0, 0, 0, 0);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+  return { start: monday, end: sunday };
+};
+
 export const Stats = () => {
-  const { goals, keyResults, tasks, risks, meetings, users, calculateGoalProgress, getUserById } =
-    useStore();
+  const {
+    goals,
+    keyResults,
+    tasks,
+    risks,
+    meetings,
+    users,
+    progresses,
+    calculateGoalProgress,
+    getUserById,
+    getKeyResultsByGoalId,
+    archiveGoal,
+  } = useStore();
+
+  const [showWeeklyReport, setShowWeeklyReport] = useState(false);
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
+  const [selectedArchiveGoals, setSelectedArchiveGoals] = useState<string[]>([]);
+  const [showSuccessToast, setShowSuccessToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
 
   const activeGoals = goals.filter((g) => !g.archived && g.status === 'active');
   const avgProgress =
@@ -134,20 +170,250 @@ export const Stats = () => {
     return 'bg-gray-100 text-gray-500';
   };
 
+  const { start: weekStart, end: weekEnd } = getWeekRange();
+
+  const weeklyProgressCount = progresses.filter((p) => {
+    const pDate = new Date(p.createdAt);
+    return pDate >= weekStart && pDate <= weekEnd;
+  }).length;
+
+  const weeklyCompletedTasks = tasks.filter((t) => {
+    const tDate = new Date(t.createdAt);
+    return t.status === 'done' && tDate >= weekStart && tDate <= weekEnd;
+  }).length;
+
+  const weeklyMeetings = meetings.filter((m) => {
+    const mDate = new Date(m.date);
+    return mDate >= weekStart && mDate <= weekEnd;
+  }).length;
+
+  const weeklyNewRisks = risks.filter((r) => {
+    const rDate = new Date(r.createdAt);
+    return rDate >= weekStart && rDate <= weekEnd;
+  }).length;
+
+  const weeklyResolvedRisks = risks.filter((r) => {
+    const rDate = new Date(r.updatedAt);
+    return r.status === 'resolved' && rDate >= weekStart && rDate <= weekEnd;
+  }).length;
+
+  const archivableGoals = goals.filter(
+    (g) => !g.archived && (g.status === 'completed' || new Date(g.endDate) < new Date())
+  );
+
+  const showToast = (message: string) => {
+    setToastMessage(message);
+    setShowSuccessToast(true);
+    setTimeout(() => setShowSuccessToast(false), 3000);
+  };
+
+  const generateWeeklyReportText = () => {
+    const lines: string[] = [];
+    lines.push('═══════════════════════════════════════════');
+    lines.push('           团队目标周报');
+    lines.push('═══════════════════════════════════════════');
+    lines.push('');
+    lines.push(`📅 周期：${formatDate(weekStart.toISOString())} - ${formatDate(weekEnd.toISOString())}`);
+    lines.push(`生成时间：${formatDate(new Date().toISOString())}`);
+    lines.push('');
+    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    lines.push('一、目标完成进度概览');
+    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    lines.push(`  活跃目标数：${activeGoals.length} 个`);
+    lines.push(`  已完成目标：${completedGoals} 个`);
+    lines.push(`  目标完成率：${goalCompletionRate}%`);
+    lines.push(`  平均进度：${avgProgress}%`);
+    lines.push('');
+    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    lines.push('二、本周数据统计');
+    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    lines.push(`  📈 新增进展：${weeklyProgressCount} 条`);
+    lines.push(`  ✅ 完成任务：${weeklyCompletedTasks} 个`);
+    lines.push(`  👥 会议记录：${weeklyMeetings} 次`);
+    lines.push(`  ⚠️  新增风险：${weeklyNewRisks} 个`);
+    lines.push(`  ✨ 解决风险：${weeklyResolvedRisks} 个`);
+    lines.push('');
+    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    lines.push('三、风险状态变化');
+    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    lines.push(`  当前待处理风险：${openRisks} 个`);
+    lines.push(`  本周新增：${weeklyNewRisks} 个`);
+    lines.push(`  本周解决：${weeklyResolvedRisks} 个`);
+    const netChange = weeklyResolvedRisks - weeklyNewRisks;
+    lines.push(`  净变化：${netChange >= 0 ? '+' : ''}${netChange} 个`);
+    lines.push('');
+    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    lines.push('四、各目标完成情况');
+    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    lines.push('');
+
+    activeGoals.forEach((goal, index) => {
+      const progress = calculateGoalProgress(goal.id);
+      const owner = getUserById(goal.ownerId);
+      const krs = getKeyResultsByGoalId(goal.id);
+      lines.push(`  ${index + 1}. ${goal.title}`);
+      lines.push(`     ├─ 负责人：${owner?.name || '未分配'}`);
+      lines.push(`     ├─ 类型：${goal.type === 'department' ? '部门目标' : '个人目标'}`);
+      lines.push(`     ├─ 周期：${goal.period} ${goal.year}`);
+      lines.push(`     ├─ 进度：${progress}%`);
+      lines.push(`     ├─ 关键结果数：${krs.length} 个`);
+      lines.push(`     └─ 状态：${goal.status === 'active' ? '进行中' : goal.status}`);
+      lines.push('');
+    });
+
+    if (activeGoals.length === 0) {
+      lines.push('  暂无活跃目标');
+      lines.push('');
+    }
+
+    lines.push('═══════════════════════════════════════════');
+    lines.push('           报告结束');
+    lines.push('═══════════════════════════════════════════');
+
+    return lines.join('\n');
+  };
+
+  const handleDownloadWeeklyReport = () => {
+    const content = generateWeeklyReportText();
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const startStr = weekStart.toISOString().split('T')[0];
+    const endStr = weekEnd.toISOString().split('T')[0];
+    link.download = `团队周报_${startStr}_${endStr}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast('周报下载成功');
+  };
+
+  const handleExportPerformance = () => {
+    const headers = [
+      '目标名称',
+      '目标类型',
+      '目标周期',
+      '目标权重',
+      '目标负责人',
+      '关键结果名称',
+      '目标值',
+      '当前值',
+      '完成率',
+      'KR权重',
+      'KR负责人',
+      '整体完成率',
+    ];
+
+    const rows: string[][] = [];
+
+    goals
+      .filter((g) => !g.archived)
+      .forEach((goal) => {
+        const goalProgress = calculateGoalProgress(goal.id);
+        const goalOwner = getUserById(goal.ownerId);
+        const krs = getKeyResultsByGoalId(goal.id);
+
+        if (krs.length === 0) {
+          rows.push([
+            goal.title,
+            goal.type === 'department' ? '部门目标' : '个人目标',
+            `${goal.year} ${goal.period}`,
+            `${goal.weight}%`,
+            goalOwner?.name || '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            `${goalProgress}%`,
+          ]);
+        } else {
+          krs.forEach((kr, index) => {
+            const krProgress = Math.min(100, Math.round((kr.currentValue / kr.targetValue) * 100));
+            const krOwner = getUserById(kr.ownerId);
+            rows.push([
+              index === 0 ? goal.title : '',
+              index === 0 ? (goal.type === 'department' ? '部门目标' : '个人目标') : '',
+              index === 0 ? `${goal.year} ${goal.period}` : '',
+              index === 0 ? `${goal.weight}%` : '',
+              index === 0 ? goalOwner?.name || '' : '',
+              kr.title,
+              `${kr.targetValue} ${kr.unit}`,
+              `${kr.currentValue} ${kr.unit}`,
+              `${krProgress}%`,
+              `${kr.weight}%`,
+              krOwner?.name || '',
+              index === 0 ? `${goalProgress}%` : '',
+            ]);
+          });
+        }
+      });
+
+    const csvContent =
+      '\uFEFF' +
+      [headers.join(','), ...rows.map((row) => row.map((cell) => `"${cell}"`).join(','))].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const dateStr = new Date().toISOString().split('T')[0];
+    link.download = `绩效数据_${dateStr}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast('绩效数据导出成功');
+  };
+
+  const toggleArchiveGoal = (goalId: string) => {
+    setSelectedArchiveGoals((prev) =>
+      prev.includes(goalId) ? prev.filter((id) => id !== goalId) : [...prev, goalId]
+    );
+  };
+
+  const handleArchiveGoals = () => {
+    selectedArchiveGoals.forEach((id) => {
+      archiveGoal(id);
+    });
+    setSelectedArchiveGoals([]);
+    setShowArchiveModal(false);
+    showToast(`成功归档 ${selectedArchiveGoals.length} 个目标`);
+  };
+
+  const handleSelectAllArchivable = () => {
+    if (selectedArchiveGoals.length === archivableGoals.length) {
+      setSelectedArchiveGoals([]);
+    } else {
+      setSelectedArchiveGoals(archivableGoals.map((g) => g.id));
+    }
+  };
+
   return (
     <Layout title="统计" subtitle="数据分析与报告">
-      <div className="space-y-6">
+      <div className="space-y-6 relative">
         {/* 功能按钮区 */}
         <div className="flex gap-3">
-          <button className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-colors shadow-sm">
+          <button
+            onClick={() => setShowWeeklyReport(true)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-colors shadow-sm"
+          >
             <FileText className="w-4 h-4" />
             生成周报
           </button>
-          <button className="flex items-center gap-2 px-4 py-2.5 bg-white text-gray-700 rounded-xl font-medium border border-gray-200 hover:bg-gray-50 hover:border-gray-300 transition-colors shadow-sm">
+          <button
+            onClick={handleExportPerformance}
+            className="flex items-center gap-2 px-4 py-2.5 bg-white text-gray-700 rounded-xl font-medium border border-gray-200 hover:bg-gray-50 hover:border-gray-300 transition-colors shadow-sm"
+          >
             <Download className="w-4 h-4" />
             导出绩效
           </button>
-          <button className="flex items-center gap-2 px-4 py-2.5 bg-white text-gray-700 rounded-xl font-medium border border-gray-200 hover:bg-gray-50 hover:border-gray-300 transition-colors shadow-sm">
+          <button
+            onClick={() => setShowArchiveModal(true)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-white text-gray-700 rounded-xl font-medium border border-gray-200 hover:bg-gray-50 hover:border-gray-300 transition-colors shadow-sm"
+          >
             <Archive className="w-4 h-4" />
             目标归档
           </button>
@@ -433,7 +699,271 @@ export const Stats = () => {
             </div>
           </div>
         </div>
+
+        {/* 周报模态框 */}
+        <Modal
+          isOpen={showWeeklyReport}
+          onClose={() => setShowWeeklyReport(false)}
+          title="本周工作周报"
+          size="xl"
+          footer={
+            <div className="flex justify-end gap-3">
+              <Button variant="secondary" onClick={() => setShowWeeklyReport(false)}>
+                关闭
+              </Button>
+              <Button onClick={handleDownloadWeeklyReport} className="gap-2">
+                <FileDown className="w-4 h-4" />
+                下载周报
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-6">
+            <div className="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl p-6 text-white">
+              <div className="flex items-center gap-3 mb-2">
+                <Calendar className="w-6 h-6" />
+                <h3 className="text-xl font-bold">本周工作周报</h3>
+              </div>
+              <p className="text-indigo-100">
+                {formatDate(weekStart.toISOString())} - {formatDate(weekEnd.toISOString())}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-4 gap-4">
+              <div className="bg-indigo-50 rounded-xl p-4 text-center">
+                <div className="text-3xl font-bold text-indigo-600">{goalCompletionRate}%</div>
+                <div className="text-sm text-indigo-600 mt-1">目标完成率</div>
+              </div>
+              <div className="bg-emerald-50 rounded-xl p-4 text-center">
+                <div className="text-3xl font-bold text-emerald-600">{weeklyProgressCount}</div>
+                <div className="text-sm text-emerald-600 mt-1">新增进展</div>
+              </div>
+              <div className="bg-amber-50 rounded-xl p-4 text-center">
+                <div className="text-3xl font-bold text-amber-600">{weeklyCompletedTasks}</div>
+                <div className="text-sm text-amber-600 mt-1">完成任务</div>
+              </div>
+              <div className="bg-blue-50 rounded-xl p-4 text-center">
+                <div className="text-3xl font-bold text-blue-600">{weeklyMeetings}</div>
+                <div className="text-sm text-blue-600 mt-1">会议记录</div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-500" />
+                风险状态变化
+              </h4>
+              <div className="bg-gray-50 rounded-xl p-4">
+                <div className="grid grid-cols-3 gap-4 text-center">
+                  <div>
+                    <div className="text-2xl font-bold text-rose-600">{weeklyNewRisks}</div>
+                    <div className="text-sm text-gray-500">新增风险</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-emerald-600">{weeklyResolvedRisks}</div>
+                    <div className="text-sm text-gray-500">解决风险</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-gray-700">{openRisks}</div>
+                    <div className="text-sm text-gray-500">待处理风险</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <h4 className="font-semibold text-gray-900 flex items-center gap-2">
+                <Target className="w-5 h-5 text-indigo-500" />
+                各目标完成情况
+              </h4>
+              <div className="space-y-3 max-h-64 overflow-y-auto">
+                {activeGoals.length > 0 ? (
+                  activeGoals.map((goal) => {
+                    const progress = calculateGoalProgress(goal.id);
+                    const owner = getUserById(goal.ownerId);
+                    return (
+                      <div
+                        key={goal.id}
+                        className="bg-gray-50 rounded-lg p-4 hover:bg-gray-100 transition-colors"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center">
+                              <Target className="w-4 h-4 text-indigo-600" />
+                            </div>
+                            <div>
+                              <p className="font-medium text-gray-900">{goal.title}</p>
+                              <p className="text-xs text-gray-500">
+                                负责人：{owner?.name || '未分配'} · {goal.period} {goal.year}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="text-lg font-bold text-indigo-600">{progress}%</span>
+                        </div>
+                        <ProgressBar percent={progress} size="sm" />
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-center py-8 text-gray-500">
+                    暂无活跃目标
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </Modal>
+
+        {/* 归档模态框 */}
+        <Modal
+          isOpen={showArchiveModal}
+          onClose={() => {
+            setShowArchiveModal(false);
+            setSelectedArchiveGoals([]);
+          }}
+          title="目标归档"
+          size="lg"
+          footer={
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-gray-500">
+                已选择 {selectedArchiveGoals.length} 个目标
+              </span>
+              <div className="flex gap-3">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setShowArchiveModal(false);
+                    setSelectedArchiveGoals([]);
+                  }}
+                >
+                  取消
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={handleArchiveGoals}
+                  disabled={selectedArchiveGoals.length === 0}
+                  className="gap-2"
+                >
+                  <Archive className="w-4 h-4" />
+                  确认归档
+                </Button>
+              </div>
+            </div>
+          }
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-gray-500">
+              选择需要归档的目标（已完成或已结束的目标），归档后目标将从活跃视图中移除。
+            </p>
+
+            {archivableGoals.length > 0 ? (
+              <>
+                <div className="flex items-center justify-between py-2 border-b border-gray-200">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedArchiveGoals.length === archivableGoals.length && archivableGoals.length > 0}
+                      onChange={handleSelectAllArchivable}
+                      className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span className="text-sm font-medium text-gray-700">全选</span>
+                  </label>
+                  <span className="text-sm text-gray-500">
+                    共 {archivableGoals.length} 个可归档目标
+                  </span>
+                </div>
+
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {archivableGoals.map((goal) => {
+                    const progress = calculateGoalProgress(goal.id);
+                    const owner = getUserById(goal.ownerId);
+                    const isSelected = selectedArchiveGoals.includes(goal.id);
+                    return (
+                      <div
+                        key={goal.id}
+                        onClick={() => toggleArchiveGoal(goal.id)}
+                        className={cn(
+                          'flex items-center gap-4 p-4 rounded-lg cursor-pointer transition-all border',
+                          isSelected
+                            ? 'bg-indigo-50 border-indigo-200'
+                            : 'bg-white border-gray-200 hover:bg-gray-50'
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            'w-5 h-5 rounded flex items-center justify-center transition-colors',
+                            isSelected
+                              ? 'bg-indigo-600'
+                              : 'border-2 border-gray-300'
+                          )}
+                        >
+                          {isSelected && <Check className="w-3 h-3 text-white" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium text-gray-900 truncate">{goal.title}</p>
+                            <span
+                              className={cn(
+                                'text-xs px-2 py-0.5 rounded-full',
+                                goal.status === 'completed'
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : 'bg-gray-100 text-gray-600'
+                              )}
+                            >
+                              {goal.status === 'completed' ? '已完成' : '已结束'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">
+                            负责人：{owner?.name || '未分配'} · {goal.period} {goal.year} · 权重 {goal.weight}%
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg font-bold text-gray-900">{progress}%</p>
+                          <p className="text-xs text-gray-500">完成进度</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-12">
+                <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle className="w-8 h-8 text-gray-400" />
+                </div>
+                <p className="text-gray-500">暂无需要归档的目标</p>
+                <p className="text-sm text-gray-400 mt-1">所有目标都在活跃状态中</p>
+              </div>
+            )}
+          </div>
+        </Modal>
+
+        {/* 成功提示 */}
+        {showSuccessToast && (
+          <div className="fixed top-6 right-6 z-50 animate-fade-in">
+            <div className="bg-emerald-500 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-3">
+              <CheckCircle className="w-5 h-5" />
+              <span className="font-medium">{toastMessage}</span>
+            </div>
+          </div>
+        )}
       </div>
+
+      <style>{`
+        @keyframes fadeIn {
+          from {
+            opacity: 0;
+            transform: translateY(-10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        .animate-fade-in {
+          animation: fadeIn 0.3s ease-out;
+        }
+      `}</style>
     </Layout>
   );
 };
